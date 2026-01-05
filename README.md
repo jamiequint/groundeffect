@@ -131,7 +131,7 @@ Once connected, Claude Code has access to 18 tools organized into these categori
 |------|-------------|
 | `search_emails` | Hybrid BM25 + vector search across emails with filters (folder, from, to, date range, attachments) |
 | `list_recent_emails` | List recent emails sorted by date (fast, no search overhead) |
-| `get_email` | Fetch single email by ID with full content. Uses plain text when available, extracts text from HTML otherwise. Truncates with `truncated: true` flag only if the resulting text exceeds 250K chars |
+| `get_email` | Fetch single email by ID with full content. Uses plain text when available, extracts text from HTML otherwise. Truncates with `truncated: true` flag if body exceeds 50K chars |
 | `get_thread` | Fetch all emails in a Gmail thread |
 | `list_folders` | List all IMAP folders for accounts |
 
@@ -206,48 +206,40 @@ personal = "personal@gmail.com"
 
 ## Logging
 
-Both the daemon and MCP server can optionally write logs for debugging. Logging is **disabled by default** and must be explicitly enabled.
+GroundEffect runs as **two separate processes**, each with its own log file:
 
-### Log Files
+| Process | Binary | Log File | What it does |
+|---------|--------|----------|--------------|
+| **Sync Daemon** | `groundeffect-daemon` | `daemon.log` | Background sync, IMAP/CalDAV, embeddings |
+| **MCP Server** | `groundeffect-mcp` | `mcp.log` | Handles Claude Code tool calls, searches |
 
-Logs are written to the XDG data directory:
+These processes run independently—the MCP server can start/stop the daemon, but they don't share a process. Logging is **disabled by default** for both.
 
-| Component | Log File | Purpose |
-|-----------|----------|---------|
-| Daemon | `~/.local/share/groundeffect/logs/daemon.log` | Sync operations, IMAP/CalDAV activity |
-| MCP Server | `~/.local/share/groundeffect/logs/mcp.log` | MCP tool calls, search queries |
+### Log File Location
 
-Logs use daily rotation and include timestamps, thread IDs, and target module information.
+```
+~/.local/share/groundeffect/logs/
+├── daemon.log    # Sync daemon logs
+└── mcp.log       # MCP server logs
+```
 
-### Enable Daemon Logging
+### Enable Logging
 
-#### Via CLI
-
+**Sync Daemon** (any of these methods):
 ```bash
-groundeffect-daemon --log
+groundeffect-daemon --log                    # CLI flag
+GROUNDEFFECT_DAEMON_LOGGING=true groundeffect-daemon  # Environment variable
+```
+Or via MCP tool: `start_daemon` with `logging: true`
+
+**MCP Server**:
+```bash
+GROUNDEFFECT_MCP_LOGGING=true groundeffect-mcp
 ```
 
-#### Via MCP Tool
+### Enable Both via Claude Code Config
 
-When using the `start_daemon` MCP tool, pass `logging: true`:
-
-```json
-{
-  "logging": true
-}
-```
-
-#### Via Environment Variable
-
-Set `GROUNDEFFECT_DAEMON_LOGGING=true` before starting the daemon.
-
-### Enable MCP Server Logging
-
-Set `GROUNDEFFECT_MCP_LOGGING=true` in your environment.
-
-### Enable Both in Claude Code MCP Config
-
-Add environment variables to your Claude Code MCP config in `~/.claude.json`:
+To enable logging for both processes when using Claude Code, add environment variables to `~/.claude.json`:
 
 ```json
 {
@@ -265,9 +257,8 @@ Add environment variables to your Claude Code MCP config in `~/.claude.json`:
 }
 ```
 
-This enables logging for both:
-- **MCP Server**: Logs immediately when Claude Code connects
-- **Daemon**: Logs when started via the `start_daemon` MCP tool
+- `GROUNDEFFECT_MCP_LOGGING` enables MCP server logging immediately when Claude Code connects
+- `GROUNDEFFECT_DAEMON_LOGGING` enables daemon logging when started via the `start_daemon` tool
 
 ## Data Storage
 

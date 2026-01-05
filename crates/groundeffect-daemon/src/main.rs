@@ -188,13 +188,16 @@ async fn add_account(alias: Option<String>) -> Result<()> {
 
     // Send success response to browser
     let success_html = r#"HTTP/1.1 200 OK
-Content-Type: text/html
+Content-Type: text/html; charset=utf-8
 
 <!DOCTYPE html>
 <html>
-<head><title>GroundEffect - Success</title></head>
+<head>
+    <meta charset="utf-8">
+    <title>GroundEffect - Success</title>
+</head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; text-align: center;">
-    <h1>✅ Authentication Successful!</h1>
+    <h1>Authentication Successful!</h1>
     <p>You can close this window and return to the terminal.</p>
 </body>
 </html>"#;

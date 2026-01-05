@@ -46,7 +46,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "add_account".to_string(),
-            description: "Add a new Google account via OAuth. IMPORTANT: Before calling this tool, ask the user how many years of email/calendar history they want to sync (1-20 years, or 'all' for everything). Opens a browser for authentication.".to_string(),
+            description: "Add a new Google account via OAuth. IMPORTANT: Before calling this tool, ask the user how many years of email/calendar history they want to sync (1-20 years, or 'all' for everything). Tell the user that more history can always be synced later using the extend_sync_range tool. Opens a browser for authentication.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -604,13 +604,16 @@ impl ToolHandler {
 
         // Send success response to browser
         let success_html = r#"HTTP/1.1 200 OK
-Content-Type: text/html
+Content-Type: text/html; charset=utf-8
 
 <!DOCTYPE html>
 <html>
-<head><title>GroundEffect - Success</title></head>
+<head>
+    <meta charset="utf-8">
+    <title>GroundEffect - Success</title>
+</head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; text-align: center;">
-    <h1>✅ Authentication Successful!</h1>
+    <h1>Authentication Successful!</h1>
     <p>You can close this window and return to Claude Code.</p>
 </body>
 </html>"#;
@@ -751,8 +754,8 @@ Content-Type: text/html
         }))
     }
 
-    /// Maximum body size in chars (~62K tokens, 80% of safe context limit)
-    const MAX_BODY_CHARS: usize = 250_000;
+    /// Maximum body size in chars (~50K to stay under Claude Code MCP limits)
+    const MAX_BODY_CHARS: usize = 50_000;
 
     /// Get a single email
     async fn get_email(&self, args: &Value) -> Result<Value> {
