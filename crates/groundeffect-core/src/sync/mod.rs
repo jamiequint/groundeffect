@@ -272,9 +272,9 @@ impl SyncManager {
             );
             (true, target_since)
         } else {
-            // Fresh sync - start from now
+            // Fresh sync - fetch all emails back to target_since
             info!("Fresh sync for {} back to {}", account_id, target_since.format("%Y-%m-%d"));
-            (false, Utc::now())
+            (false, target_since)
         };
 
         // Skip email sync if very recent (within last 5 minutes) and backfill complete
