@@ -3,11 +3,13 @@
 //! Long-running launchd service that handles email/calendar sync,
 //! indexing, and writes to LanceDB.
 
+use std::process::Command;
 use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
+use dialoguer::{Confirm, Input, Select};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -19,7 +21,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
-use groundeffect_core::config::Config;
+use groundeffect_core::config::{Config, DaemonConfig};
 use groundeffect_core::db::Database;
 use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel};
 use groundeffect_core::keychain::KeychainManager;
@@ -59,6 +61,17 @@ enum Commands {
     Run,
     /// Run as MCP server (stdio JSON-RPC for Claude Code)
     Mcp,
+    /// Interactive setup wizard - configure settings and optionally install launchd agent
+    Setup {
+        /// Install launchd agent for auto-start at login
+        #[arg(long)]
+        install: bool,
+        /// Uninstall launchd agent
+        #[arg(long)]
+        uninstall: bool,
+    },
+    /// Interactive configuration - change daemon settings
+    Configure,
 }
 
 #[tokio::main]
@@ -122,6 +135,8 @@ async fn main() -> Result<()> {
         Some(Commands::RemoveAccount { account }) => remove_account(&account).await,
         Some(Commands::Run) | None => run_daemon().await,
         Some(Commands::Mcp) => run_mcp_server().await,
+        Some(Commands::Setup { install, uninstall }) => run_setup(install, uninstall),
+        Some(Commands::Configure) => run_configure(),
     }
 }
 
@@ -660,6 +675,368 @@ async fn run_mcp_server() -> Result<()> {
     // Create and run MCP server
     let mcp = McpServer::new(db, config, embedding, oauth);
     mcp.run().await.map_err(|e| anyhow::anyhow!(e))
+}
+
+/// Run the setup wizard
+fn run_setup(install: bool, uninstall: bool) -> Result<()> {
+    if uninstall {
+        return uninstall_launchd_agent();
+    }
+
+    println!("\n🔧 GroundEffect Setup Wizard\n");
+
+    // Load or create daemon config
+    let mut daemon_config = DaemonConfig::load().unwrap_or_default();
+
+    // Interactive configuration
+    println!("Configure daemon settings (press Enter for defaults):\n");
+
+    // Logging
+    let logging_enabled = Confirm::new()
+        .with_prompt("Enable file logging?")
+        .default(daemon_config.logging_enabled)
+        .interact()?;
+    daemon_config.logging_enabled = logging_enabled;
+
+    // Email poll interval
+    let email_interval: u64 = Input::new()
+        .with_prompt("Email poll interval (seconds)")
+        .default(daemon_config.email_poll_interval_secs)
+        .interact_text()?;
+    daemon_config.email_poll_interval_secs = email_interval;
+
+    // Calendar poll interval
+    let calendar_interval: u64 = Input::new()
+        .with_prompt("Calendar poll interval (seconds)")
+        .default(daemon_config.calendar_poll_interval_secs)
+        .interact_text()?;
+    daemon_config.calendar_poll_interval_secs = calendar_interval;
+
+    // Max concurrent fetches
+    let max_fetches: usize = Input::new()
+        .with_prompt("Max concurrent email fetches")
+        .default(daemon_config.max_concurrent_fetches)
+        .interact_text()?;
+    daemon_config.max_concurrent_fetches = max_fetches;
+
+    // Save config
+    daemon_config.save()?;
+    println!("\n✅ Configuration saved to {:?}", DaemonConfig::config_path());
+
+    // Install launchd agent if requested or prompt
+    let should_install = if install {
+        true
+    } else {
+        Confirm::new()
+            .with_prompt("Install launchd agent for auto-start at login?")
+            .default(true)
+            .interact()?
+    };
+
+    if should_install {
+        install_launchd_agent(&daemon_config)?;
+    } else {
+        println!("\nTo start the daemon manually, run:");
+        println!("  groundeffect-daemon run\n");
+    }
+
+    Ok(())
+}
+
+/// Run the configure command (interactive settings change)
+fn run_configure() -> Result<()> {
+    println!("\n⚙️  GroundEffect Configuration\n");
+
+    // Load existing config
+    let mut daemon_config = DaemonConfig::load().unwrap_or_default();
+
+    println!("Current settings:");
+    println!("  Logging enabled: {}", daemon_config.logging_enabled);
+    println!("  Email poll interval: {}s", daemon_config.email_poll_interval_secs);
+    println!("  Calendar poll interval: {}s", daemon_config.calendar_poll_interval_secs);
+    println!("  Max concurrent fetches: {}", daemon_config.max_concurrent_fetches);
+    println!();
+
+    // Select what to change
+    let options = &[
+        "Logging enabled",
+        "Email poll interval",
+        "Calendar poll interval",
+        "Max concurrent fetches",
+        "Change all settings",
+        "Exit (no changes)",
+    ];
+
+    let selection = Select::new()
+        .with_prompt("What would you like to change?")
+        .items(options)
+        .default(5)
+        .interact()?;
+
+    let changed = match selection {
+        0 => {
+            daemon_config.logging_enabled = Confirm::new()
+                .with_prompt("Enable file logging?")
+                .default(daemon_config.logging_enabled)
+                .interact()?;
+            true
+        }
+        1 => {
+            daemon_config.email_poll_interval_secs = Input::new()
+                .with_prompt("Email poll interval (seconds)")
+                .default(daemon_config.email_poll_interval_secs)
+                .interact_text()?;
+            true
+        }
+        2 => {
+            daemon_config.calendar_poll_interval_secs = Input::new()
+                .with_prompt("Calendar poll interval (seconds)")
+                .default(daemon_config.calendar_poll_interval_secs)
+                .interact_text()?;
+            true
+        }
+        3 => {
+            daemon_config.max_concurrent_fetches = Input::new()
+                .with_prompt("Max concurrent fetches")
+                .default(daemon_config.max_concurrent_fetches)
+                .interact_text()?;
+            true
+        }
+        4 => {
+            // Change all settings
+            daemon_config.logging_enabled = Confirm::new()
+                .with_prompt("Enable file logging?")
+                .default(daemon_config.logging_enabled)
+                .interact()?;
+            daemon_config.email_poll_interval_secs = Input::new()
+                .with_prompt("Email poll interval (seconds)")
+                .default(daemon_config.email_poll_interval_secs)
+                .interact_text()?;
+            daemon_config.calendar_poll_interval_secs = Input::new()
+                .with_prompt("Calendar poll interval (seconds)")
+                .default(daemon_config.calendar_poll_interval_secs)
+                .interact_text()?;
+            daemon_config.max_concurrent_fetches = Input::new()
+                .with_prompt("Max concurrent fetches")
+                .default(daemon_config.max_concurrent_fetches)
+                .interact_text()?;
+            true
+        }
+        _ => {
+            println!("No changes made.");
+            false
+        }
+    };
+
+    if changed {
+        daemon_config.save()?;
+        println!("\n✅ Configuration saved.");
+
+        // Check if launchd agent is installed and offer to restart
+        if DaemonConfig::is_launchd_installed() {
+            let restart = Confirm::new()
+                .with_prompt("Launchd agent detected. Restart daemon with new settings?")
+                .default(true)
+                .interact()?;
+
+            if restart {
+                restart_launchd_daemon()?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Install the launchd agent
+fn install_launchd_agent(config: &DaemonConfig) -> Result<()> {
+    let plist_path = DaemonConfig::launchd_plist_path();
+
+    // Find the daemon binary path
+    let daemon_path = find_daemon_binary()?;
+
+    // Create the LaunchAgents directory if it doesn't exist
+    if let Some(parent) = plist_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Generate the plist content
+    let log_dir = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".local")
+        .join("share")
+        .join("groundeffect")
+        .join("logs");
+    std::fs::create_dir_all(&log_dir)?;
+
+    let plist_content = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.groundeffect.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>source ~/.secrets 2>/dev/null; exec {daemon_path}{logging_flag}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{stdout}</string>
+    <key>StandardErrorPath</key>
+    <string>{stderr}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>GROUNDEFFECT_EMAIL_POLL_INTERVAL</key>
+        <string>{email_interval}</string>
+        <key>GROUNDEFFECT_CALENDAR_POLL_INTERVAL</key>
+        <string>{calendar_interval}</string>
+        <key>GROUNDEFFECT_MAX_CONCURRENT_FETCHES</key>
+        <string>{max_fetches}</string>
+    </dict>
+</dict>
+</plist>"#,
+        daemon_path = daemon_path.display(),
+        logging_flag = if config.logging_enabled { " --log" } else { "" },
+        stdout = log_dir.join("stdout.log").display(),
+        stderr = log_dir.join("stderr.log").display(),
+        email_interval = config.email_poll_interval_secs,
+        calendar_interval = config.calendar_poll_interval_secs,
+        max_fetches = config.max_concurrent_fetches,
+    );
+
+    std::fs::write(&plist_path, plist_content)?;
+    println!("✅ Created launchd plist at {:?}", plist_path);
+
+    // Load the launchd agent
+    let output = Command::new("launchctl")
+        .args(["load", "-w", plist_path.to_str().unwrap()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.contains("service already loaded") {
+            anyhow::bail!("Failed to load launchd agent: {}", stderr);
+        }
+    }
+
+    println!("✅ Launchd agent installed and started");
+    println!("\nThe daemon will now start automatically at login.");
+    println!("To check status: launchctl list | grep groundeffect");
+    println!("To view logs: tail -f {:?}\n", log_dir.join("daemon.log"));
+
+    Ok(())
+}
+
+/// Uninstall the launchd agent
+fn uninstall_launchd_agent() -> Result<()> {
+    let plist_path = DaemonConfig::launchd_plist_path();
+
+    if !plist_path.exists() {
+        println!("Launchd agent is not installed.");
+        return Ok(());
+    }
+
+    println!("🗑️  Uninstalling launchd agent...\n");
+
+    // Unload the agent
+    let output = Command::new("launchctl")
+        .args(["unload", "-w", plist_path.to_str().unwrap()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Ignore "could not find service" errors
+        if !stderr.contains("Could not find specified service") {
+            eprintln!("Warning: Failed to unload agent: {}", stderr);
+        }
+    }
+
+    // Remove the plist file
+    std::fs::remove_file(&plist_path)?;
+
+    println!("✅ Launchd agent uninstalled");
+    println!("The daemon will no longer start automatically at login.\n");
+
+    Ok(())
+}
+
+/// Restart the daemon via launchctl
+fn restart_launchd_daemon() -> Result<()> {
+    println!("🔄 Restarting daemon...");
+
+    let plist_path = DaemonConfig::launchd_plist_path();
+
+    // Unload
+    let _ = Command::new("launchctl")
+        .args(["unload", plist_path.to_str().unwrap()])
+        .output();
+
+    // Brief pause
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Reload
+    let output = Command::new("launchctl")
+        .args(["load", "-w", plist_path.to_str().unwrap()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.contains("service already loaded") {
+            anyhow::bail!("Failed to restart daemon: {}", stderr);
+        }
+    }
+
+    println!("✅ Daemon restarted with new settings\n");
+    Ok(())
+}
+
+/// Find the daemon binary path
+fn find_daemon_binary() -> Result<std::path::PathBuf> {
+    // Check if we're running from cargo (development)
+    if let Ok(exe) = std::env::current_exe() {
+        if exe.exists() {
+            return Ok(exe);
+        }
+    }
+
+    // Check common installation paths
+    let home = dirs::home_dir().unwrap_or_default();
+    let paths = [
+        // Homebrew on Apple Silicon
+        std::path::PathBuf::from("/opt/homebrew/bin/groundeffect-daemon"),
+        // Homebrew on Intel
+        std::path::PathBuf::from("/usr/local/bin/groundeffect-daemon"),
+        // Cargo install
+        home.join(".cargo/bin/groundeffect-daemon"),
+    ];
+
+    for path in &paths {
+        if path.exists() {
+            return Ok(path.clone());
+        }
+    }
+
+    // Use which to find it
+    let output = Command::new("which")
+        .arg("groundeffect-daemon")
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(std::path::PathBuf::from(path));
+            }
+        }
+    }
+
+    anyhow::bail!("Could not find groundeffect-daemon binary. Make sure it's installed and in your PATH.")
 }
 
 /// URL decoding

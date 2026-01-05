@@ -24,3 +24,5 @@ uuid = { workspace = true }
 dirs = { workspace = true }
 directories = { workspace = true }
 open = "5.0"
+dialoguer = "0.11"
+toml = { workspace = true }

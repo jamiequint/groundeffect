@@ -369,6 +369,86 @@ impl Config {
     }
 }
 
+/// Daemon-specific configuration for launchd/setup
+/// Stored separately at ~/.config/groundeffect/daemon.toml
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    /// Enable file logging to ~/.local/share/groundeffect/logs/
+    #[serde(default)]
+    pub logging_enabled: bool,
+
+    /// Email poll interval in seconds (default: 300)
+    #[serde(default = "default_poll_interval")]
+    pub email_poll_interval_secs: u64,
+
+    /// Calendar poll interval in seconds (default: 300)
+    #[serde(default = "default_poll_interval")]
+    pub calendar_poll_interval_secs: u64,
+
+    /// Max concurrent email fetches (default: 10)
+    #[serde(default = "default_concurrent_fetches")]
+    pub max_concurrent_fetches: usize,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            logging_enabled: false,
+            email_poll_interval_secs: 300,
+            calendar_poll_interval_secs: 300,
+            max_concurrent_fetches: 10,
+        }
+    }
+}
+
+impl DaemonConfig {
+    /// Get the config file path
+    pub fn config_path() -> PathBuf {
+        get_config_dir().join("daemon.toml")
+    }
+
+    /// Load daemon config from disk (returns defaults if not found)
+    pub fn load() -> Result<Self> {
+        let path = Self::config_path();
+        if path.exists() {
+            let contents = std::fs::read_to_string(&path)?;
+            let config: DaemonConfig = toml::from_str(&contents)?;
+            info!("Loaded daemon config from {:?}", path);
+            Ok(config)
+        } else {
+            info!("No daemon config found at {:?}, using defaults", path);
+            Ok(DaemonConfig::default())
+        }
+    }
+
+    /// Save daemon config to disk
+    pub fn save(&self) -> Result<()> {
+        let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let contents = toml::to_string_pretty(self)
+            .map_err(|e| Error::Config(e.to_string()))?;
+        std::fs::write(&path, contents)?;
+        info!("Saved daemon config to {:?}", path);
+        Ok(())
+    }
+
+    /// Get the launchd plist path
+    pub fn launchd_plist_path() -> PathBuf {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Library")
+            .join("LaunchAgents")
+            .join("com.groundeffect.daemon.plist")
+    }
+
+    /// Check if launchd agent is installed
+    pub fn is_launchd_installed() -> bool {
+        Self::launchd_plist_path().exists()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

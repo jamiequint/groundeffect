@@ -9,7 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tracing::{debug, info, warn};
 
-use crate::config::Config;
+use crate::config::{Config, DaemonConfig};
 use crate::db::Database;
 use crate::error::{Error, Result};
 use crate::keychain::KeychainManager;
@@ -421,7 +421,19 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "logging": {
                         "type": "boolean",
-                        "description": "Enable file logging to ~/.groundeffect/logs/daemon.log (only for start/restart, default: false)"
+                        "description": "Enable file logging to ~/.local/share/groundeffect/logs/ (only for start/restart)"
+                    },
+                    "email_poll_interval": {
+                        "type": "integer",
+                        "description": "Email poll interval in seconds (for start/restart, default: 300)"
+                    },
+                    "calendar_poll_interval": {
+                        "type": "integer",
+                        "description": "Calendar poll interval in seconds (for start/restart, default: 300)"
+                    },
+                    "max_concurrent_fetches": {
+                        "type": "integer",
+                        "description": "Max concurrent email fetches (for start/restart, default: 10)"
                     }
                 },
                 "required": ["action"]
@@ -2220,14 +2232,40 @@ Content-Type: text/html; charset=utf-8
 
     /// Start the daemon
     async fn daemon_start(&self, arguments: &Value) -> Result<Value> {
-        // Parse logging option - check argument first, then environment variable
-        let enable_logging = arguments.get("logging")
-            .and_then(|v| v.as_bool())
-            .unwrap_or_else(|| {
-                std::env::var("GROUNDEFFECT_DAEMON_LOGGING")
-                    .map(|v| v == "true" || v == "1")
-                    .unwrap_or(false)
-            });
+        // Load existing daemon config
+        let mut daemon_config = DaemonConfig::load().unwrap_or_default();
+        let mut config_changed = false;
+
+        // Apply parameter overrides from arguments
+        if let Some(logging) = arguments.get("logging").and_then(|v| v.as_bool()) {
+            if daemon_config.logging_enabled != logging {
+                daemon_config.logging_enabled = logging;
+                config_changed = true;
+            }
+        }
+        if let Some(interval) = arguments.get("email_poll_interval").and_then(|v| v.as_u64()) {
+            if daemon_config.email_poll_interval_secs != interval {
+                daemon_config.email_poll_interval_secs = interval;
+                config_changed = true;
+            }
+        }
+        if let Some(interval) = arguments.get("calendar_poll_interval").and_then(|v| v.as_u64()) {
+            if daemon_config.calendar_poll_interval_secs != interval {
+                daemon_config.calendar_poll_interval_secs = interval;
+                config_changed = true;
+            }
+        }
+        if let Some(max) = arguments.get("max_concurrent_fetches").and_then(|v| v.as_u64()) {
+            if daemon_config.max_concurrent_fetches != max as usize {
+                daemon_config.max_concurrent_fetches = max as usize;
+                config_changed = true;
+            }
+        }
+
+        // Save config if changed
+        if config_changed {
+            daemon_config.save().ok();
+        }
 
         // Check if already running
         if let Some(pid) = self.is_daemon_running() {
@@ -2235,7 +2273,13 @@ Content-Type: text/html; charset=utf-8
                 "success": false,
                 "message": format!("Daemon is already running (PID {})", pid),
                 "status": "running",
-                "pid": pid
+                "pid": pid,
+                "settings": {
+                    "logging_enabled": daemon_config.logging_enabled,
+                    "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
+                    "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
+                    "max_concurrent_fetches": daemon_config.max_concurrent_fetches
+                }
             }));
         }
 
@@ -2253,8 +2297,8 @@ Content-Type: text/html; charset=utf-8
         // Start daemon as background process
         let mut cmd = Command::new(&daemon_path);
 
-        // Add logging flag if requested
-        if enable_logging {
+        // Add logging flag if enabled
+        if daemon_config.logging_enabled {
             cmd.arg("--log");
         }
 
@@ -2265,6 +2309,11 @@ Content-Type: text/html; charset=utf-8
         if let Some(secret) = &client_secret {
             cmd.env("GROUNDEFFECT_GOOGLE_CLIENT_SECRET", secret);
         }
+
+        // Pass settings via environment variables
+        cmd.env("GROUNDEFFECT_EMAIL_POLL_INTERVAL", daemon_config.email_poll_interval_secs.to_string());
+        cmd.env("GROUNDEFFECT_CALENDAR_POLL_INTERVAL", daemon_config.calendar_poll_interval_secs.to_string());
+        cmd.env("GROUNDEFFECT_MAX_CONCURRENT_FETCHES", daemon_config.max_concurrent_fetches.to_string());
 
         // Spawn the daemon
         let child = cmd
@@ -2289,7 +2338,7 @@ Content-Type: text/html; charset=utf-8
 
         // Verify it's running
         if self.is_daemon_running().is_some() {
-            let message = if enable_logging {
+            let message = if daemon_config.logging_enabled {
                 "Daemon started successfully with file logging enabled"
             } else {
                 "Daemon started successfully"
@@ -2299,8 +2348,13 @@ Content-Type: text/html; charset=utf-8
                 "message": message,
                 "status": "running",
                 "pid": pid,
-                "logging_enabled": enable_logging,
-                "log_file": if enable_logging { Some("~/.groundeffect/logs/daemon.log") } else { None }
+                "settings": {
+                    "logging_enabled": daemon_config.logging_enabled,
+                    "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
+                    "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
+                    "max_concurrent_fetches": daemon_config.max_concurrent_fetches
+                },
+                "log_file": if daemon_config.logging_enabled { Some("~/.local/share/groundeffect/logs/daemon.log") } else { None }
             }))
         } else {
             // Clean up PID file if daemon didn't start
@@ -2388,13 +2442,24 @@ Content-Type: text/html; charset=utf-8
 
     /// Get daemon status
     async fn daemon_status(&self) -> Result<Value> {
+        // Load daemon config
+        let daemon_config = DaemonConfig::load().unwrap_or_default();
+        let launchd_installed = DaemonConfig::is_launchd_installed();
+
         match self.is_daemon_running() {
             Some(pid) => {
                 // Get additional info about the daemon process
                 let mut process_info = serde_json::json!({
                     "running": true,
                     "pid": pid,
-                    "status": "running"
+                    "status": "running",
+                    "settings": {
+                        "logging_enabled": daemon_config.logging_enabled,
+                        "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
+                        "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
+                        "max_concurrent_fetches": daemon_config.max_concurrent_fetches
+                    },
+                    "launchd_agent_installed": launchd_installed
                 });
 
                 // Try to get process uptime on Unix
@@ -2419,7 +2484,14 @@ Content-Type: text/html; charset=utf-8
                 Ok(serde_json::json!({
                     "running": false,
                     "status": "stopped",
-                    "message": "Daemon is not running. Use manage_daemon with action: 'start' to start it."
+                    "message": "Daemon is not running. Use manage_daemon with action: 'start' to start it.",
+                    "settings": {
+                        "logging_enabled": daemon_config.logging_enabled,
+                        "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
+                        "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
+                        "max_concurrent_fetches": daemon_config.max_concurrent_fetches
+                    },
+                    "launchd_agent_installed": launchd_installed
                 }))
             }
         }
