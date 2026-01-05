@@ -44,6 +44,9 @@ class Groundeffect < Formula
       3. Run the setup wizard:
          groundeffect-daemon setup --install
 
+         Settings can be changed later with: groundeffect-daemon configure
+         Note: "Max concurrent fetches" = IMAP connections (Gmail limit: 15)
+
       4. Add a Google account by asking Claude Code:
          "Add my Gmail account to groundeffect"
 
