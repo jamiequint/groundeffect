@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::process::Command;
 
-use chrono::Utc;
+use chrono::{DateTime, Local, Utc};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -917,13 +917,19 @@ Content-Type: text/html
                 (false, None)
             };
 
+            // Helper to format UTC time as local time string
+            fn format_local_time(dt: DateTime<Utc>) -> String {
+                let local: DateTime<Local> = dt.into();
+                local.format("%Y-%m-%d %H:%M:%S %Z").to_string()
+            }
+
             // Always include all fields for consistent output
             let stat = serde_json::json!({
                 "id": account.id,
                 "alias": account.alias,
                 "status": format!("{:?}", account.status).to_lowercase(),
-                "last_email_sync": account.last_sync_email.map(|d| d.to_rfc3339()),
-                "last_calendar_sync": account.last_sync_calendar.map(|d| d.to_rfc3339()),
+                "last_email_sync": account.last_sync_email.map(format_local_time),
+                "last_calendar_sync": account.last_sync_calendar.map(format_local_time),
                 "email_count": email_count,
                 "event_count": event_count,
                 "attachment_count": 0, // TODO
