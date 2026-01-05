@@ -123,16 +123,17 @@ Once connected, Claude Code has access to these tools:
 
 | Tool | Description |
 |------|-------------|
-| `manage_accounts` | Manage accounts with actions: `list` (all accounts), `get` (single account details), `add` (OAuth flow), `delete` (remove account), `configure` (set alias, sync_email, sync_calendar, folders) |
+| `manage_accounts` | Manage accounts with actions: `list`, `get`, `add` (OAuth), `delete`, `configure`. Configure options: alias, sync_email, sync_calendar, folders, sync_attachments. |
 
 ### Email Tools
 
 | Tool | Description |
 |------|-------------|
-| `search_emails` | Hybrid BM25 + vector search across emails with filters (folder, from, to, date range, attachments) |
-| `list_recent_emails` | List recent emails sorted by date (fast, no search overhead) |
-| `get_email` | Fetch single email by ID with full content. Uses plain text when available, extracts text from HTML otherwise. Truncates with `truncated: true` flag if body exceeds 75K chars |
+| `search_emails` | Hybrid BM25 + vector search across emails with filters (folder, from, to, date range, has_attachment). Returns attachment details (id, filename, size, downloaded status) for each email. |
+| `list_recent_emails` | List recent emails sorted by date (fast, no search overhead). Includes attachment info. |
+| `get_email` | Fetch single email by ID with full content and attachment list. Truncates with `truncated: true` if body exceeds 75K chars. |
 | `get_thread` | Fetch all emails in a Gmail thread |
+| `get_attachment` | Get attachment content by email_id + attachment_id or filename. Returns text content directly for text files, file path for binary files (PDF, images). |
 | `list_folders` | List all IMAP folders for accounts |
 
 ### Calendar Tools
@@ -148,7 +149,7 @@ Once connected, Claude Code has access to these tools:
 
 | Tool | Description |
 |------|-------------|
-| `manage_sync` | Manage sync (actions: status, reset, extend, resume_from). For status, omit account to see all accounts with live progress. |
+| `manage_sync` | Manage sync with actions: `status` (shows email/event/attachment counts), `reset`, `extend`, `resume_from`, `download_attachments` (triggers background attachment download). |
 
 ### Daemon Management
 
@@ -156,11 +157,27 @@ Once connected, Claude Code has access to these tools:
 |------|-------------|
 | `manage_daemon` | Manage the sync daemon (actions: start, stop, restart, status) |
 
+### Attachments
+
+Attachment **metadata** (filename, size, mime_type) syncs automatically with emails. Attachment **files** are downloaded only when enabled:
+
+1. **Enable attachment sync**: `manage_accounts configure` with `sync_attachments: true`
+2. **Download existing attachments**: `manage_sync download_attachments` (runs in background)
+3. **View attachment**: `get_attachment` with `email_id` + `attachment_id` or `filename`
+
+Attachments are stored in `~/.local/share/groundeffect/attachments/` with a 50MB size limit per file.
+
 ### Example queries in Claude Code
 
 ```
 Search my emails for "quarterly report"
 → Uses search_emails with hybrid BM25 + vector search
+
+Find emails with attachments from John
+→ Uses search_emails with from: "john", has_attachment: true
+
+Get the PDF from that invoice email
+→ Uses get_attachment with email_id and filename
 
 Show me my recent emails
 → Uses list_recent_emails (faster than search for just listing)
@@ -168,17 +185,17 @@ Show me my recent emails
 What meetings do I have about the product launch?
 → Uses search_calendar
 
+Create a meeting for tomorrow at 2pm
+→ Uses create_event
+
 Add my work Gmail account
 → Uses manage_accounts with action 'add' to start OAuth flow
 
-Configure my work account to only sync email (not calendar)
-→ Uses manage_accounts with action 'configure', sync_calendar: false
+Enable attachment sync for my account
+→ Uses manage_accounts configure with sync_attachments: true
 
 Show me the sync status
-→ Uses manage_sync with action 'status' (shows live progress during sync)
-
-Start syncing my email
-→ Uses manage_daemon to begin background sync
+→ Uses manage_sync with action 'status' (shows email/event/attachment counts)
 ```
 
 ## Configuration
