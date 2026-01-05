@@ -61,46 +61,20 @@ Each user needs their own Google Cloud OAuth credentials:
 6. Select **Desktop app** as application type
 7. Download the JSON credentials file
 
-### 3. Configure credentials
+### 3. Set up MCP for Claude Code
 
-Create `~/.secrets` with your OAuth credentials:
-
-```bash
-# ~/.secrets
-export GROUNDEFFECT_CLIENT_ID="your-client-id.apps.googleusercontent.com"
-export GROUNDEFFECT_CLIENT_SECRET="your-client-secret"
-```
-
-Secure the file:
-
-```bash
-chmod 600 ~/.secrets
-```
-
-### 4. Set up MCP for Claude Code
-
-Create a wrapper script that sources credentials:
-
-```bash
-# /path/to/groundeffect/groundeffect-mcp.sh
-#!/bin/bash
-source ~/.secrets
-exec /path/to/groundeffect/target/release/groundeffect-mcp
-```
-
-```bash
-chmod +x groundeffect-mcp.sh
-```
-
-Add to your Claude Code config (`~/.claude.json`):
+Add to your Claude Code config (`~/.claude.json`) with your OAuth credentials:
 
 ```json
 {
   "mcpServers": {
     "groundeffect": {
       "type": "stdio",
-      "command": "/path/to/groundeffect/groundeffect-mcp.sh",
-      "args": []
+      "command": "groundeffect-mcp",
+      "env": {
+        "GROUNDEFFECT_GOOGLE_CLIENT_ID": "your-client-id.apps.googleusercontent.com",
+        "GROUNDEFFECT_GOOGLE_CLIENT_SECRET": "your-client-secret"
+      }
     }
   }
 }
@@ -302,16 +276,17 @@ GROUNDEFFECT_MCP_LOGGING=true groundeffect-mcp
 
 ### Enable Both via Claude Code Config
 
-To enable logging for both processes when using Claude Code, add environment variables to `~/.claude.json`:
+To enable logging for both processes, add the logging env vars to your `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
     "groundeffect": {
       "type": "stdio",
-      "command": "/path/to/groundeffect/groundeffect-mcp.sh",
-      "args": [],
+      "command": "groundeffect-mcp",
       "env": {
+        "GROUNDEFFECT_GOOGLE_CLIENT_ID": "your-client-id",
+        "GROUNDEFFECT_GOOGLE_CLIENT_SECRET": "your-client-secret",
         "GROUNDEFFECT_DAEMON_LOGGING": "true",
         "GROUNDEFFECT_MCP_LOGGING": "true"
       }
