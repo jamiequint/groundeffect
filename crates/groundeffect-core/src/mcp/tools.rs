@@ -2303,6 +2303,51 @@ Content-Type: text/html; charset=utf-8
             }));
         }
 
+        // Check if launchd is managing the daemon
+        let launchd_installed = DaemonConfig::is_launchd_installed();
+
+        if launchd_installed {
+            // Use launchctl to start
+            let plist_path = DaemonConfig::launchd_plist_path();
+            let output = Command::new("launchctl")
+                .args(["load", "-w", plist_path.to_str().unwrap_or("")])
+                .output()
+                .map_err(|e| Error::Other(format!("Failed to load launchd agent: {}", e)))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // Ignore "service already loaded" - just means we need to kickstart
+                if !stderr.contains("service already loaded") {
+                    return Err(Error::Other(format!(
+                        "Failed to start daemon via launchctl: {}",
+                        stderr
+                    )));
+                }
+            }
+
+            // Wait for daemon to start
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            if let Some(pid) = self.is_daemon_running() {
+                return Ok(serde_json::json!({
+                    "success": true,
+                    "message": "Daemon started successfully via launchctl",
+                    "status": "running",
+                    "pid": pid,
+                    "settings": {
+                        "logging_enabled": daemon_config.logging_enabled,
+                        "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
+                        "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
+                        "max_concurrent_fetches": daemon_config.max_concurrent_fetches
+                    },
+                    "log_file": if daemon_config.logging_enabled { Some("~/.local/share/groundeffect/logs/daemon.log") } else { None }
+                }));
+            } else {
+                return Err(Error::Other("Daemon failed to start via launchctl. Check logs for errors.".to_string()));
+            }
+        }
+
+        // No launchd - start daemon directly
         // Get daemon binary path
         let daemon_path = self.get_daemon_binary_path()?;
 
@@ -2391,19 +2436,42 @@ Content-Type: text/html; charset=utf-8
             }
         };
 
-        // Send SIGTERM to gracefully stop the daemon
-        #[cfg(unix)]
-        {
-            let output = Command::new("kill")
-                .args(["-TERM", &pid.to_string()])
+        // Check if launchd is managing the daemon
+        let launchd_installed = DaemonConfig::is_launchd_installed();
+
+        if launchd_installed {
+            // Use launchctl to stop - need to unload to prevent auto-restart from KeepAlive
+            let plist_path = DaemonConfig::launchd_plist_path();
+            let output = Command::new("launchctl")
+                .args(["unload", plist_path.to_str().unwrap_or("")])
                 .output()
-                .map_err(|e| Error::Other(format!("Failed to send stop signal: {}", e)))?;
+                .map_err(|e| Error::Other(format!("Failed to unload launchd agent: {}", e)))?;
 
             if !output.status.success() {
-                return Err(Error::Other(format!(
-                    "Failed to stop daemon: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                )));
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // Ignore "could not find service" - means it's already unloaded
+                if !stderr.contains("Could not find specified service") {
+                    return Err(Error::Other(format!(
+                        "Failed to stop daemon via launchctl: {}",
+                        stderr
+                    )));
+                }
+            }
+        } else {
+            // No launchd - send SIGTERM directly
+            #[cfg(unix)]
+            {
+                let output = Command::new("kill")
+                    .args(["-TERM", &pid.to_string()])
+                    .output()
+                    .map_err(|e| Error::Other(format!("Failed to send stop signal: {}", e)))?;
+
+                if !output.status.success() {
+                    return Err(Error::Other(format!(
+                        "Failed to stop daemon: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    )));
+                }
             }
         }
 
@@ -2444,6 +2512,60 @@ Content-Type: text/html; charset=utf-8
 
     /// Restart the daemon
     async fn daemon_restart(&self, arguments: &Value) -> Result<Value> {
+        // Check if launchd is managing the daemon
+        let launchd_installed = DaemonConfig::is_launchd_installed();
+
+        if launchd_installed {
+            // Use launchctl for atomic restart - unload then load
+            let plist_path = DaemonConfig::launchd_plist_path();
+
+            // Unload (stops the daemon)
+            let _ = Command::new("launchctl")
+                .args(["unload", plist_path.to_str().unwrap_or("")])
+                .output();
+
+            // Brief pause
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            // Load (starts the daemon)
+            let output = Command::new("launchctl")
+                .args(["load", "-w", plist_path.to_str().unwrap_or("")])
+                .output()
+                .map_err(|e| Error::Other(format!("Failed to load launchd agent: {}", e)))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.contains("service already loaded") {
+                    return Err(Error::Other(format!(
+                        "Failed to restart daemon via launchctl: {}",
+                        stderr
+                    )));
+                }
+            }
+
+            // Wait for daemon to start
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            let daemon_config = DaemonConfig::load().unwrap_or_default();
+            if let Some(pid) = self.is_daemon_running() {
+                return Ok(serde_json::json!({
+                    "success": true,
+                    "message": "Daemon restarted successfully via launchctl",
+                    "status": "running",
+                    "pid": pid,
+                    "settings": {
+                        "logging_enabled": daemon_config.logging_enabled,
+                        "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
+                        "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
+                        "max_concurrent_fetches": daemon_config.max_concurrent_fetches
+                    }
+                }));
+            } else {
+                return Err(Error::Other("Daemon failed to restart via launchctl".to_string()));
+            }
+        }
+
+        // No launchd - use direct process management
         // Stop if running
         if self.is_daemon_running().is_some() {
             self.daemon_stop().await?;
