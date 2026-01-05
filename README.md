@@ -172,45 +172,199 @@ This is typically invoked automatically by Claude Code via the MCP config.
 
 ## MCP Tools
 
-Once connected, Claude Code has access to these tools:
+Once connected, Claude Code has access to these tools. All tools support account aliases where applicable.
 
 ### Account Management
 
-| Tool | Description |
-|------|-------------|
-| `manage_accounts` | Manage accounts with actions: `list`, `get`, `add` (OAuth), `delete`, `configure`. Configure options: alias, sync_email, sync_calendar, folders, sync_attachments. |
+#### `manage_accounts`
+
+Manage Gmail/GCal accounts with these actions:
+
+| Action | Description | Required Parameters |
+|--------|-------------|---------------------|
+| `list` | List all connected accounts | - |
+| `get` | Get details for one account | `account` |
+| `add` | Start OAuth flow to add account | `years_to_sync` (will prompt if omitted) |
+| `delete` | Remove account and all synced data | `account`, `confirm: true` |
+| `configure` | Update account settings | `account` + settings to change |
+
+**Parameters for `add`:**
+- `years_to_sync`: How much email history to sync - `"1"` to `"20"` or `"all"` (required, will prompt if not provided)
+- `alias`: Friendly name for the account (optional)
+
+**Parameters for `configure`:**
+- `alias`: Set or change alias (or `null` to remove)
+- `sync_email`: Enable/disable email sync (boolean)
+- `sync_calendar`: Enable/disable calendar sync (boolean)
+- `folders`: Array of folders to sync (empty array = all folders)
+- `sync_attachments`: Enable automatic attachment download (boolean, requires daemon restart)
 
 ### Email Tools
 
-| Tool | Description |
-|------|-------------|
-| `search_emails` | Hybrid BM25 + vector search across emails with filters (folder, from, to, date range, has_attachment). Returns attachment details (id, filename, size, downloaded status) for each email. |
-| `list_recent_emails` | List recent emails sorted by date (fast, no search overhead). Includes attachment info. |
-| `get_email` | Fetch single email by ID with full content and attachment list. Truncates with `truncated: true` if body exceeds 75K chars. |
-| `get_thread` | Fetch all emails in a Gmail thread |
-| `get_attachment` | Get attachment content by email_id + attachment_id or filename. Returns text content directly for text files, file path for binary files (PDF, images). |
-| `list_folders` | List all IMAP folders for accounts |
+#### `search_emails`
+
+Hybrid BM25 + vector semantic search across emails.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | string | Search query (natural language) - **required** |
+| `intent` | string | `"search"` for semantic search, `"list"` for recent/unread (fast path) |
+| `accounts` | array | Account emails/aliases to search (omit for all) |
+| `limit` | integer | Max results (default: 10, max: 100) |
+| `folder` | string | Filter by folder (e.g., `"INBOX"`, `"Sent"`) |
+| `from` | string | Filter by sender email/name |
+| `to` | string | Filter by recipient email/name |
+| `date_from` | string | Filter after date (YYYY-MM-DD) |
+| `date_to` | string | Filter before date (YYYY-MM-DD) |
+| `has_attachment` | boolean | Filter emails with attachments |
+
+#### `list_recent_emails`
+
+List recent emails sorted by date (newest first). Faster than `search_emails` when you just need recent messages.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `account` | string | Account email or alias (omit for all accounts) |
+| `limit` | integer | Number of emails (default: 10, max: 100) |
+
+#### `get_email`
+
+Fetch single email by ID with full content.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Email ID - **required** |
+
+Returns full email with attachments list. Body is truncated with `truncated: true` if it exceeds 75K chars.
+
+#### `get_thread`
+
+Fetch all emails in a Gmail thread.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `thread_id` | string | Gmail thread ID - **required** |
+| `accounts` | array | Filter to specific accounts |
+
+#### `send_email`
+
+Compose and send an email. Returns preview for user confirmation by default.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `from_account` | string | Account email or alias to send from - **required** |
+| `to` | array | Recipient email addresses - **required** |
+| `subject` | string | Email subject - **required** |
+| `body` | string | Email body (plain text) - **required** |
+| `cc` | array | CC recipients |
+| `bcc` | array | BCC recipients |
+| `reply_to_id` | string | Email ID to reply to (for threading) |
+| `confirm` | boolean | Set `true` to send immediately; `false` returns preview |
+
+#### `get_attachment`
+
+Get an email attachment by ID or filename.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `email_id` | string | Email ID containing the attachment - **required** |
+| `attachment_id` | string | Attachment ID (from email response) |
+| `filename` | string | Attachment filename (alternative to attachment_id) |
+
+Returns text content directly for text files, file path for binary files (PDF, images) that can be read with the Read tool.
+
+#### `list_folders`
+
+List all IMAP folders for accounts.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `accounts` | array | Filter to specific accounts |
 
 ### Calendar Tools
 
-| Tool | Description |
-|------|-------------|
-| `search_calendar` | Search calendar events with filters (date range, calendar) |
-| `get_event` | Fetch single calendar event by ID |
-| `list_calendars` | List all calendars for accounts |
-| `create_event` | Create a new calendar event with attendees, location, etc. |
+#### `search_calendar`
+
+Search calendar events with semantic search.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | string | Search query (natural language) - **required** |
+| `accounts` | array | Account emails/aliases to search (omit for all) |
+| `limit` | integer | Max results (default: 10, max: 100) |
+| `calendar_id` | string | Filter to specific calendar |
+| `date_from` | string | Filter after date (YYYY-MM-DD) |
+| `date_to` | string | Filter before date (YYYY-MM-DD) |
+
+#### `get_event`
+
+Fetch single calendar event by ID.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Event ID - **required** |
+
+#### `list_calendars`
+
+List all calendars for accounts.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `accounts` | array | Filter to specific accounts |
+
+#### `create_event`
+
+Create a new calendar event.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `account` | string | Account email or alias - **required** |
+| `summary` | string | Event title - **required** |
+| `start` | string | Start time (ISO 8601) - **required** |
+| `end` | string | End time (ISO 8601) - **required** |
+| `calendar_id` | string | Calendar ID (omit for primary) |
+| `description` | string | Event description |
+| `location` | string | Event location |
+| `attendees` | array | Attendee email addresses |
 
 ### Sync Management
 
-| Tool | Description |
-|------|-------------|
-| `manage_sync` | Manage sync with actions: `status` (shows email/event/attachment counts), `reset`, `extend`, `resume_from`, `download_attachments` (triggers background attachment download). |
+#### `manage_sync`
+
+Manage email and calendar sync.
+
+| Action | Description | Required Parameters |
+|--------|-------------|---------------------|
+| `status` | Show sync status (email/event/attachment counts) | `account` (optional, shows all if omitted) |
+| `reset` | Clear all synced data for account | `account`, `confirm: true`, `data_type` (optional) |
+| `extend` | Sync older emails back to target date | `account`, `target_date` |
+| `resume_from` | Force sync to resume from specific date | `account`, `target_date` |
+| `download_attachments` | Download attachments for existing emails | `account` |
+
+**Parameters:**
+- `account`: Account email or alias
+- `target_date`: Date in YYYY-MM-DD format (for `extend` or `resume_from`)
+- `data_type`: `"email"`, `"calendar"`, or `"all"` (for `reset`, default: `"all"`)
+- `confirm`: Must be `true` to confirm reset
 
 ### Daemon Management
 
-| Tool | Description |
-|------|-------------|
-| `manage_daemon` | Manage the sync daemon (actions: start, stop, restart, status) |
+#### `manage_daemon`
+
+Manage the background sync daemon.
+
+| Action | Description |
+|--------|-------------|
+| `start` | Start the daemon |
+| `stop` | Stop the daemon |
+| `restart` | Restart the daemon |
+| `status` | Check if daemon is running |
+
+**Optional parameters for `start`/`restart`:**
+- `logging`: Enable logging to `~/.local/share/groundeffect/logs/` (boolean)
+- `email_poll_interval`: Email poll interval in seconds (default: 300)
+- `calendar_poll_interval`: Calendar poll interval in seconds (default: 300)
+- `max_concurrent_fetches`: Max concurrent IMAP connections (default: 10, Gmail limit: 15)
 
 ### Attachments
 
