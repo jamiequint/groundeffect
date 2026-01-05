@@ -1,0 +1,42 @@
+# Rust
+/target/
+Cargo.lock
+
+# macOS
+.DS_Store
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.playground/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+*.local
+
+# Data files (generated at runtime)
+data/
+*.lance/
+*.log
+
+# Model files (downloaded at runtime)
+models/
+
+# Build artifacts
+*.dSYM/
+*.app/
+
+# Secrets
+*.pem
+*.key
+credentials.json
+client_secret*.json

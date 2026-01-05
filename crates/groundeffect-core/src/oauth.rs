@@ -1,0 +1,276 @@
+//! OAuth 2.0 flow for Google authentication
+
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info};
+
+use crate::error::{Error, Result};
+use crate::keychain::{KeychainManager, OAuthTokens};
+
+/// Google OAuth configuration
+pub struct GoogleOAuthConfig {
+    /// OAuth client ID
+    pub client_id: String,
+
+    /// OAuth client secret
+    pub client_secret: String,
+
+    /// Redirect URI for OAuth callback
+    pub redirect_uri: String,
+}
+
+impl Default for GoogleOAuthConfig {
+    fn default() -> Self {
+        Self {
+            // These would be replaced with actual values in production
+            // For development, use a placeholder that must be configured
+            client_id: std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_ID")
+                .unwrap_or_else(|_| "YOUR_CLIENT_ID".to_string()),
+            client_secret: std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_SECRET")
+                .unwrap_or_else(|_| "YOUR_CLIENT_SECRET".to_string()),
+            redirect_uri: "http://localhost:8085/oauth/callback".to_string(),
+        }
+    }
+}
+
+/// Required OAuth scopes for GroundEffect
+pub const OAUTH_SCOPES: &[&str] = &[
+    "https://mail.google.com/",                     // Full Gmail access (IMAP)
+    "https://www.googleapis.com/auth/gmail.send",   // Send emails
+    "https://www.googleapis.com/auth/calendar",     // Full Calendar access
+    "https://www.googleapis.com/auth/userinfo.email", // Get email address
+    "https://www.googleapis.com/auth/userinfo.profile", // Get display name
+];
+
+/// Google token endpoint
+const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+
+/// Google userinfo endpoint
+const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
+
+/// Response from Google token endpoint
+#[derive(Debug, Deserialize)]
+pub struct TokenResponse {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_in: i64,
+    pub token_type: String,
+    pub scope: Option<String>,
+}
+
+/// User info from Google
+#[derive(Debug, Deserialize)]
+pub struct UserInfo {
+    pub id: String,
+    pub email: String,
+    pub name: Option<String>,
+    pub picture: Option<String>,
+}
+
+/// OAuth manager for handling Google authentication
+pub struct OAuthManager {
+    config: GoogleOAuthConfig,
+    client: Client,
+}
+
+impl OAuthManager {
+    /// Create a new OAuth manager
+    pub fn new() -> Self {
+        Self::with_config(GoogleOAuthConfig::default())
+    }
+
+    /// Create with custom config
+    pub fn with_config(config: GoogleOAuthConfig) -> Self {
+        Self {
+            config,
+            client: Client::new(),
+        }
+    }
+
+    /// Generate the OAuth authorization URL
+    pub fn authorization_url(&self, state: &str) -> String {
+        let scopes = OAUTH_SCOPES.join(" ");
+        format!(
+            "https://accounts.google.com/o/oauth2/v2/auth?\
+             client_id={}&\
+             redirect_uri={}&\
+             response_type=code&\
+             scope={}&\
+             access_type=offline&\
+             prompt=consent&\
+             state={}",
+            urlencoding::encode(&self.config.client_id),
+            urlencoding::encode(&self.config.redirect_uri),
+            urlencoding::encode(&scopes),
+            urlencoding::encode(state)
+        )
+    }
+
+    /// Exchange authorization code for tokens
+    pub async fn exchange_code(&self, code: &str) -> Result<(OAuthTokens, UserInfo)> {
+        info!("Exchanging authorization code for tokens");
+
+        let params = [
+            ("client_id", self.config.client_id.as_str()),
+            ("client_secret", self.config.client_secret.as_str()),
+            ("code", code),
+            ("grant_type", "authorization_code"),
+            ("redirect_uri", self.config.redirect_uri.as_str()),
+        ];
+
+        let response = self
+            .client
+            .post(TOKEN_URL)
+            .form(&params)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            error!("Token exchange failed: {} - {}", status, body);
+            return Err(Error::OAuth(format!(
+                "Token exchange failed: {} - {}",
+                status, body
+            )));
+        }
+
+        let token_response: TokenResponse = response.json().await?;
+        debug!("Token exchange successful");
+
+        let expires_at = chrono::Utc::now().timestamp() + token_response.expires_in;
+
+        let tokens = OAuthTokens {
+            access_token: token_response.access_token.clone(),
+            refresh_token: token_response
+                .refresh_token
+                .ok_or_else(|| Error::OAuth("No refresh token in response".to_string()))?,
+            expires_at,
+            scopes: token_response
+                .scope
+                .map(|s| s.split_whitespace().map(String::from).collect())
+                .unwrap_or_else(|| OAUTH_SCOPES.iter().map(|s| s.to_string()).collect()),
+        };
+
+        // Get user info
+        let user_info = self.get_user_info(&token_response.access_token).await?;
+        info!("Authenticated as {}", user_info.email);
+
+        Ok((tokens, user_info))
+    }
+
+    /// Refresh an access token
+    pub async fn refresh_token(&self, account_id: &str) -> Result<OAuthTokens> {
+        let current_tokens = KeychainManager::get_tokens(account_id)?
+            .ok_or_else(|| Error::TokenExpired {
+                account: account_id.to_string(),
+            })?;
+
+        debug!("Refreshing access token for {}", account_id);
+
+        let params = [
+            ("client_id", self.config.client_id.as_str()),
+            ("client_secret", self.config.client_secret.as_str()),
+            ("refresh_token", current_tokens.refresh_token.as_str()),
+            ("grant_type", "refresh_token"),
+        ];
+
+        let response = self
+            .client
+            .post(TOKEN_URL)
+            .form(&params)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            error!("Token refresh failed for {}: {} - {}", account_id, status, body);
+            return Err(Error::TokenRefreshFailed {
+                account: account_id.to_string(),
+                reason: format!("{} - {}", status, body),
+            });
+        }
+
+        let token_response: TokenResponse = response.json().await?;
+        let expires_at = chrono::Utc::now().timestamp() + token_response.expires_in;
+
+        let new_tokens = OAuthTokens {
+            access_token: token_response.access_token,
+            // Keep the old refresh token if not provided
+            refresh_token: token_response
+                .refresh_token
+                .unwrap_or(current_tokens.refresh_token),
+            expires_at,
+            scopes: current_tokens.scopes,
+        };
+
+        // Store updated tokens
+        KeychainManager::store_tokens(account_id, &new_tokens)?;
+        info!("Refreshed access token for {}", account_id);
+
+        Ok(new_tokens)
+    }
+
+    /// Get user info from Google
+    pub async fn get_user_info(&self, access_token: &str) -> Result<UserInfo> {
+        let response = self
+            .client
+            .get(USERINFO_URL)
+            .bearer_auth(access_token)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(Error::OAuth(format!(
+                "Failed to get user info: {} - {}",
+                status, body
+            )));
+        }
+
+        let user_info: UserInfo = response.json().await?;
+        Ok(user_info)
+    }
+
+    /// Get a valid access token, refreshing if necessary
+    pub async fn get_valid_token(&self, account_id: &str) -> Result<String> {
+        debug!("Getting valid token for {}", account_id);
+        let tokens = KeychainManager::get_tokens(account_id)?
+            .ok_or_else(|| Error::TokenExpired {
+                account: account_id.to_string(),
+            })?;
+
+        if tokens.is_expired() {
+            info!("Token expired for {}, refreshing...", account_id);
+            let new_tokens = self.refresh_token(account_id).await?;
+            info!("Token refreshed for {}", account_id);
+            Ok(new_tokens.access_token)
+        } else {
+            debug!("Token still valid for {}", account_id);
+            Ok(tokens.access_token)
+        }
+    }
+
+    /// Generate XOAUTH2 string for IMAP authentication
+    /// Note: async_imap base64-encodes the response, so we return raw bytes
+    pub fn generate_xoauth2(email: &str, access_token: &str) -> String {
+        let auth_string = format!("user={}\x01auth=Bearer {}\x01\x01", email, access_token);
+        debug!("XOAUTH2 raw length: {}", auth_string.len());
+        auth_string
+    }
+}
+
+impl Default for OAuthManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// URL encoding helper
+mod urlencoding {
+    pub fn encode(s: &str) -> String {
+        url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+    }
+}
