@@ -16,6 +16,11 @@ class Groundeffect < Formula
     bin.install "groundeffect-mcp"
   end
 
+  def post_install
+    # Restart daemon if it's running (e.g., after upgrade)
+    system "launchctl", "kickstart", "-k", "gui/#{Process.uid}/com.groundeffect.daemon" rescue nil
+  end
+
   def caveats
     <<~EOS
       To complete setup:
