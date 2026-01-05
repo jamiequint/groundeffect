@@ -17,24 +17,31 @@ class Groundeffect < Formula
     <<~EOS
       To complete setup:
 
-      1. Add MCP config to ~/.claude.json with your Google OAuth credentials:
+      1. Create ~/.secrets with your Google OAuth credentials:
+         export GROUNDEFFECT_GOOGLE_CLIENT_ID="your-client-id"
+         export GROUNDEFFECT_GOOGLE_CLIENT_SECRET="your-client-secret"
+
+         Then add to ~/.zshrc or ~/.bashrc:
+         source ~/.secrets
+
+      2. Add MCP config to ~/.claude.json:
          {
            "mcpServers": {
              "groundeffect": {
                "type": "stdio",
                "command": "groundeffect-mcp",
                "env": {
-                 "GROUNDEFFECT_GOOGLE_CLIENT_ID": "your-client-id",
-                 "GROUNDEFFECT_GOOGLE_CLIENT_SECRET": "your-client-secret"
+                 "GROUNDEFFECT_GOOGLE_CLIENT_ID": "${GROUNDEFFECT_GOOGLE_CLIENT_ID}",
+                 "GROUNDEFFECT_GOOGLE_CLIENT_SECRET": "${GROUNDEFFECT_GOOGLE_CLIENT_SECRET}"
                }
              }
            }
          }
 
-      2. Run the setup wizard:
+      3. Run the setup wizard:
          groundeffect-daemon setup --install
 
-      3. Add a Google account:
+      4. Add a Google account:
          groundeffect-daemon add-account
 
       Get OAuth credentials from: https://console.cloud.google.com/apis/credentials

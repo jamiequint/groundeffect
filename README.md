@@ -63,8 +63,9 @@ Each user needs their own Google Cloud OAuth credentials:
 
 ### 3. Set up MCP for Claude Code
 
-Add to your Claude Code config (`~/.claude.json`) with your OAuth credentials:
+Add to your Claude Code config (`~/.claude.json`):
 
+**Option A: Direct credentials**
 ```json
 {
   "mcpServers": {
@@ -74,6 +75,35 @@ Add to your Claude Code config (`~/.claude.json`) with your OAuth credentials:
       "env": {
         "GROUNDEFFECT_GOOGLE_CLIENT_ID": "your-client-id.apps.googleusercontent.com",
         "GROUNDEFFECT_GOOGLE_CLIENT_SECRET": "your-client-secret"
+      }
+    }
+  }
+}
+```
+
+**Option B: Reference from ~/.secrets (recommended)**
+
+Create `~/.secrets`:
+```bash
+export GROUNDEFFECT_GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
+export GROUNDEFFECT_GOOGLE_CLIENT_SECRET="your-client-secret"
+```
+
+Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
+```bash
+source ~/.secrets
+```
+
+Then in `~/.claude.json`:
+```json
+{
+  "mcpServers": {
+    "groundeffect": {
+      "type": "stdio",
+      "command": "groundeffect-mcp",
+      "env": {
+        "GROUNDEFFECT_GOOGLE_CLIENT_ID": "${GROUNDEFFECT_GOOGLE_CLIENT_ID}",
+        "GROUNDEFFECT_GOOGLE_CLIENT_SECRET": "${GROUNDEFFECT_GOOGLE_CLIENT_SECRET}"
       }
     }
   }
@@ -285,8 +315,8 @@ To enable logging for both processes, add the logging env vars to your `~/.claud
       "type": "stdio",
       "command": "groundeffect-mcp",
       "env": {
-        "GROUNDEFFECT_GOOGLE_CLIENT_ID": "your-client-id",
-        "GROUNDEFFECT_GOOGLE_CLIENT_SECRET": "your-client-secret",
+        "GROUNDEFFECT_GOOGLE_CLIENT_ID": "${GROUNDEFFECT_GOOGLE_CLIENT_ID}",
+        "GROUNDEFFECT_GOOGLE_CLIENT_SECRET": "${GROUNDEFFECT_GOOGLE_CLIENT_SECRET}",
         "GROUNDEFFECT_DAEMON_LOGGING": "true",
         "GROUNDEFFECT_MCP_LOGGING": "true"
       }
