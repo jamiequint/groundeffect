@@ -239,6 +239,28 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 }
             }),
         },
+        ToolDefinition {
+            name: "get_attachment".to_string(),
+            description: "Get an email attachment. Returns content for text files, file path for binary files (use Read tool on path).".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "email_id": {
+                        "type": "string",
+                        "description": "Email ID containing the attachment"
+                    },
+                    "attachment_id": {
+                        "type": "string",
+                        "description": "Attachment ID (from get_email response)"
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Attachment filename (alternative to attachment_id)"
+                    }
+                },
+                "required": ["email_id"]
+            }),
+        },
         // Calendar tools
         ToolDefinition {
             name: "search_calendar".to_string(),
@@ -444,6 +466,7 @@ impl ToolHandler {
             "get_thread" => self.get_thread(arguments).await,
             "send_email" => self.send_email(arguments).await,
             "list_folders" => self.list_folders(arguments).await,
+            "get_attachment" => self.get_attachment(arguments).await,
             "search_calendar" => self.search_calendar(arguments).await,
             "get_event" => self.get_event(arguments).await,
             "list_calendars" => self.list_calendars(arguments).await,
@@ -1274,6 +1297,150 @@ Content-Type: text/html; charset=utf-8
                 "[Gmail]/Trash"
             ]
         }))
+    }
+
+    /// Get an email attachment
+    async fn get_attachment(&self, args: &Value) -> Result<Value> {
+        let email_id = args["email_id"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing email_id".to_string()))?;
+
+        let attachment_id = args["attachment_id"].as_str();
+        let filename = args["filename"].as_str();
+
+        if attachment_id.is_none() && filename.is_none() {
+            return Err(Error::InvalidRequest(
+                "Must provide either attachment_id or filename".to_string(),
+            ));
+        }
+
+        // Get the email
+        let email = self
+            .db
+            .get_email(email_id)
+            .await?
+            .ok_or_else(|| Error::InvalidRequest(format!("Email not found: {}", email_id)))?;
+
+        // Find the attachment
+        let attachment = email
+            .attachments
+            .iter()
+            .find(|a| {
+                if let Some(id) = attachment_id {
+                    a.id == id
+                } else if let Some(name) = filename {
+                    a.filename.eq_ignore_ascii_case(name)
+                } else {
+                    false
+                }
+            })
+            .ok_or_else(|| {
+                let search = attachment_id.or(filename).unwrap_or("unknown");
+                Error::InvalidRequest(format!("Attachment not found: {}", search))
+            })?;
+
+        // Check if downloaded
+        if !attachment.downloaded {
+            return Ok(serde_json::json!({
+                "error": "not_downloaded",
+                "message": "Attachment not downloaded. Enable sync_attachments or use manage_sync download_attachments.",
+                "attachment": {
+                    "id": attachment.id,
+                    "filename": attachment.filename,
+                    "mime_type": attachment.mime_type,
+                    "size": attachment.size,
+                    "size_human": attachment.size_human()
+                }
+            }));
+        }
+
+        let local_path = attachment.local_path.as_ref().ok_or_else(|| {
+            Error::InvalidRequest("Attachment marked as downloaded but no local_path".to_string())
+        })?;
+
+        // Check if file exists
+        if !local_path.exists() {
+            return Err(Error::InvalidRequest(format!(
+                "Attachment file missing: {:?}",
+                local_path
+            )));
+        }
+
+        // Determine if we should return content or just the path
+        let is_text = attachment.mime_type.starts_with("text/")
+            || attachment.mime_type == "application/json"
+            || attachment.mime_type == "application/xml"
+            || attachment.filename.ends_with(".csv")
+            || attachment.filename.ends_with(".txt")
+            || attachment.filename.ends_with(".md")
+            || attachment.filename.ends_with(".json")
+            || attachment.filename.ends_with(".xml")
+            || attachment.filename.ends_with(".yaml")
+            || attachment.filename.ends_with(".yml")
+            || attachment.filename.ends_with(".toml")
+            || attachment.filename.ends_with(".html")
+            || attachment.filename.ends_with(".htm")
+            || attachment.filename.ends_with(".css")
+            || attachment.filename.ends_with(".js")
+            || attachment.filename.ends_with(".ts")
+            || attachment.filename.ends_with(".py")
+            || attachment.filename.ends_with(".rs")
+            || attachment.filename.ends_with(".go")
+            || attachment.filename.ends_with(".java")
+            || attachment.filename.ends_with(".c")
+            || attachment.filename.ends_with(".cpp")
+            || attachment.filename.ends_with(".h")
+            || attachment.filename.ends_with(".sh")
+            || attachment.filename.ends_with(".sql");
+
+        if is_text && attachment.size < 1_000_000 {
+            // Read and return text content (up to 1MB)
+            match std::fs::read_to_string(local_path) {
+                Ok(content) => {
+                    Ok(serde_json::json!({
+                        "attachment": {
+                            "id": attachment.id,
+                            "filename": attachment.filename,
+                            "mime_type": attachment.mime_type,
+                            "size": attachment.size,
+                            "size_human": attachment.size_human()
+                        },
+                        "content_type": "text",
+                        "content": content
+                    }))
+                }
+                Err(e) => {
+                    // Fall back to returning path if read fails
+                    Ok(serde_json::json!({
+                        "attachment": {
+                            "id": attachment.id,
+                            "filename": attachment.filename,
+                            "mime_type": attachment.mime_type,
+                            "size": attachment.size,
+                            "size_human": attachment.size_human()
+                        },
+                        "content_type": "binary",
+                        "local_path": local_path.to_string_lossy(),
+                        "read_error": e.to_string(),
+                        "hint": "Use Read tool on local_path to view this file"
+                    }))
+                }
+            }
+        } else {
+            // Return path for binary files
+            Ok(serde_json::json!({
+                "attachment": {
+                    "id": attachment.id,
+                    "filename": attachment.filename,
+                    "mime_type": attachment.mime_type,
+                    "size": attachment.size,
+                    "size_human": attachment.size_human()
+                },
+                "content_type": "binary",
+                "local_path": local_path.to_string_lossy(),
+                "hint": "Use Read tool on local_path to view this file"
+            }))
+        }
     }
 
     /// Search calendar events
