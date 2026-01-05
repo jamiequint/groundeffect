@@ -402,6 +402,14 @@ async fn run_daemon() -> Result<()> {
     info!("Opening database at {:?}", config.lancedb_dir());
     let db = Arc::new(Database::open(config.lancedb_dir()).await?);
 
+    // Ensure indexes exist in background (doesn't block startup)
+    let db_for_indexes = db.clone();
+    tokio::spawn(async move {
+        if let Err(e) = db_for_indexes.ensure_indexes().await {
+            error!("Failed to ensure indexes: {}", e);
+        }
+    });
+
     // Check for accounts (warn but don't exit - accounts can be added via MCP)
     let accounts = db.list_accounts().await?;
     if accounts.is_empty() {
@@ -470,6 +478,10 @@ async fn run_daemon() -> Result<()> {
     let sync_manager_clone = sync_manager.clone();
     let db_clone = db.clone();
     tokio::spawn(async move {
+        // Track last FTS index rebuild time (rebuild at most every 5 minutes)
+        let mut last_fts_rebuild: Option<std::time::Instant> = None;
+        let fts_rebuild_interval = std::time::Duration::from_secs(300);
+
         while let Some(event) = event_rx.recv().await {
             match event {
                 SyncEvent::NewEmail { account_id, .. } => {
@@ -491,6 +503,23 @@ async fn run_daemon() -> Result<()> {
                         "Sync completed for {} ({:?}): {} items",
                         account_id, sync_type, count
                     );
+
+                    // Rebuild FTS indexes if enough time has passed since last rebuild
+                    if count > 0 {
+                        let should_rebuild = last_fts_rebuild
+                            .map(|t| t.elapsed() >= fts_rebuild_interval)
+                            .unwrap_or(true);
+
+                        if should_rebuild {
+                            let db_for_fts = db_clone.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = db_for_fts.rebuild_fts_indexes().await {
+                                    error!("Failed to rebuild FTS indexes: {}", e);
+                                }
+                            });
+                            last_fts_rebuild = Some(std::time::Instant::now());
+                        }
+                    }
                 }
                 SyncEvent::SyncError { account_id, error } => {
                     error!("Sync error for {}: {}", account_id, error);

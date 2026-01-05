@@ -78,6 +78,11 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "type": "string",
                         "description": "Search query (natural language)"
                     },
+                    "intent": {
+                        "type": "string",
+                        "enum": ["search", "list"],
+                        "description": "Use 'list' for recent/latest/unread requests (fast path), 'search' for content-based queries (semantic search)"
+                    },
                     "accounts": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -168,6 +173,52 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["thread_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "send_email".to_string(),
+            description: "Compose and send an email. By default returns a preview for user confirmation. Set confirm=true after user approves to actually send.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "from_account": {
+                        "type": "string",
+                        "description": "Account email or alias to send from"
+                    },
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Recipient email addresses"
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Email subject line"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Email body (plain text)"
+                    },
+                    "cc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "CC recipients"
+                    },
+                    "bcc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "BCC recipients"
+                    },
+                    "reply_to_id": {
+                        "type": "string",
+                        "description": "Email ID to reply to (for threading)"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Set to true to send immediately. If false/omitted, returns preview for user approval.",
+                        "default": false
+                    }
+                },
+                "required": ["from_account", "to", "subject", "body"]
             }),
         },
         ToolDefinition {
@@ -387,6 +438,7 @@ impl ToolHandler {
             "list_recent_emails" => self.list_recent_emails(arguments).await,
             "get_email" => self.get_email(arguments).await,
             "get_thread" => self.get_thread(arguments).await,
+            "send_email" => self.send_email(arguments).await,
             "list_folders" => self.list_folders(arguments).await,
             "search_calendar" => self.search_calendar(arguments).await,
             "get_event" => self.get_event(arguments).await,
@@ -801,6 +853,13 @@ Content-Type: text/html; charset=utf-8
 
         let limit = args["limit"].as_u64().unwrap_or(10) as usize;
 
+        // Check for listing intent (fast path)
+        let intent = args["intent"].as_str().unwrap_or("search");
+        if intent == "list" {
+            info!("Listing intent detected, using fast list path");
+            return self.list_recent_emails(args).await;
+        }
+
         // For wildcard/empty queries, use fast path (no semantic search needed)
         let query_trimmed = query.trim();
         if query_trimmed.is_empty() || query_trimmed == "*" {
@@ -957,13 +1016,231 @@ Content-Type: text/html; charset=utf-8
 
     /// Get all emails in a thread
     async fn get_thread(&self, args: &Value) -> Result<Value> {
-        let thread_id = args["thread_id"]
+        let thread_id_str = args["thread_id"]
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing thread_id".to_string()))?;
 
-        // TODO: Implement thread fetching from LanceDB
-        // For now, return an error indicating the feature is pending
-        Err(Error::Other("Thread fetching not yet implemented".to_string()))
+        let thread_id: u64 = thread_id_str
+            .parse()
+            .map_err(|_| Error::InvalidRequest("thread_id must be a valid number".to_string()))?;
+
+        // Resolve account filter if provided
+        let account_id = args["accounts"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .and_then(|id| self.config.resolve_account(id));
+
+        let emails = self
+            .db
+            .get_emails_by_thread(thread_id, account_id.as_deref())
+            .await?;
+
+        if emails.is_empty() {
+            return Err(Error::Other(format!("No emails found for thread {}", thread_id)));
+        }
+
+        // Format each email in the thread
+        let mut messages = Vec::with_capacity(emails.len());
+        for email in &emails {
+            // Get body text: prefer plain, extract from HTML if needed
+            let body = if !email.body_plain.trim().is_empty() {
+                email.body_plain.clone()
+            } else if let Some(html) = &email.body_html {
+                html2text::from_read(html.as_bytes(), 80).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            // Truncate if needed
+            let total_chars = body.len();
+            let (body_text, truncated) = if total_chars > Self::MAX_BODY_CHARS {
+                let truncated_body = body.char_indices()
+                    .take_while(|(i, _)| *i < Self::MAX_BODY_CHARS)
+                    .map(|(_, c)| c)
+                    .collect::<String>();
+                (truncated_body, true)
+            } else {
+                (body, false)
+            };
+
+            let mut msg = serde_json::json!({
+                "id": email.id,
+                "from": email.from,
+                "to": email.to,
+                "cc": email.cc,
+                "subject": email.subject,
+                "date": email.date,
+                "body": body_text,
+                "snippet": email.snippet,
+                "is_read": email.is_read(),
+            });
+
+            if truncated {
+                msg["truncated"] = serde_json::json!(true);
+                msg["total_body_chars"] = serde_json::json!(total_chars);
+            }
+
+            messages.push(msg);
+        }
+
+        // Use first email for thread metadata
+        let first = &emails[0];
+        Ok(serde_json::json!({
+            "thread_id": thread_id,
+            "account_id": first.account_id,
+            "subject": first.subject,
+            "message_count": emails.len(),
+            "messages": messages,
+        }))
+    }
+
+    /// Send an email via Gmail API (with optional preview mode)
+    async fn send_email(&self, args: &Value) -> Result<Value> {
+        // Check if this is a confirmed send or just a preview
+        let confirm = args["confirm"].as_bool().unwrap_or(false);
+
+        // Get account
+        let from_account = args["from_account"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing from_account".to_string()))?;
+
+        let from_email = self.config.resolve_account(from_account)
+            .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", from_account)))?;
+
+        let to: Vec<String> = args["to"]
+            .as_array()
+            .ok_or_else(|| Error::InvalidRequest("Missing 'to' recipients".to_string()))?
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+
+        if to.is_empty() {
+            return Err(Error::InvalidRequest("At least one recipient required".to_string()));
+        }
+
+        let subject = args["subject"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing subject".to_string()))?;
+
+        let body = args["body"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing body".to_string()))?;
+
+        let cc: Vec<String> = args["cc"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        let bcc: Vec<String> = args["bcc"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        // Build reply headers if replying
+        let reply_to_id = args["reply_to_id"].as_str();
+        let mut in_reply_to = None;
+        let mut references = None;
+        let mut final_subject = subject.to_string();
+
+        if let Some(reply_id) = reply_to_id {
+            if let Ok(Some(original)) = self.db.get_email(reply_id).await {
+                in_reply_to = Some(original.message_id.clone());
+                references = Some(original.message_id.clone());
+                if !final_subject.starts_with("Re:") && !final_subject.starts_with("RE:") {
+                    final_subject = format!("Re: {}", original.subject);
+                }
+            }
+        }
+
+        // If not confirmed, return preview for user approval
+        if !confirm {
+            return Ok(serde_json::json!({
+                "status": "preview",
+                "message": "Please review this email. Call send_email again with confirm=true to send.",
+                "email": {
+                    "from": from_email,
+                    "to": to,
+                    "cc": cc,
+                    "bcc": bcc,
+                    "subject": final_subject,
+                    "body": body,
+                    "in_reply_to": in_reply_to,
+                    "references": references,
+                }
+            }));
+        }
+
+        // Build RFC 2822 message
+        let mut message = format!(
+            "From: {}\r\n\
+             To: {}\r\n",
+            from_email,
+            to.join(", ")
+        );
+
+        if !cc.is_empty() {
+            message.push_str(&format!("Cc: {}\r\n", cc.join(", ")));
+        }
+        if !bcc.is_empty() {
+            message.push_str(&format!("Bcc: {}\r\n", bcc.join(", ")));
+        }
+
+        let mut headers = String::new();
+        if let Some(ref msg_id) = in_reply_to {
+            headers.push_str(&format!("In-Reply-To: {}\r\n", msg_id));
+        }
+        if let Some(ref refs) = references {
+            headers.push_str(&format!("References: {}\r\n", refs));
+        }
+
+        message.push_str(&format!(
+            "Subject: {}\r\n\
+             MIME-Version: 1.0\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             {}\r\n\
+             {}",
+            final_subject,
+            headers,
+            body
+        ));
+
+        // Base64url encode the message
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let encoded = URL_SAFE_NO_PAD.encode(message.as_bytes());
+
+        // Get access token
+        let access_token = self.oauth.get_valid_token(&from_email).await?;
+
+        // Send via Gmail API
+        let client = reqwest::Client::new();
+        let response = client
+            .post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send")
+            .bearer_auth(&access_token)
+            .json(&serde_json::json!({
+                "raw": encoded
+            }))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+        }
+
+        let result: serde_json::Value = response.json().await?;
+        let message_id = result["id"].as_str().unwrap_or("unknown");
+
+        info!("Email sent successfully: {}", message_id);
+
+        Ok(serde_json::json!({
+            "status": "sent",
+            "message_id": message_id,
+            "from": from_email,
+            "to": to,
+            "subject": final_subject,
+        }))
     }
 
     /// List folders
@@ -1041,15 +1318,86 @@ Content-Type: text/html; charset=utf-8
         Ok(serde_json::to_value(&event)?)
     }
 
-    /// List calendars
-    async fn list_calendars(&self, _args: &Value) -> Result<Value> {
-        // TODO: Implement calendar listing
+    /// List calendars for all accounts (or filtered accounts)
+    async fn list_calendars(&self, args: &Value) -> Result<Value> {
+        // Resolve account filter if provided
+        let account_filter: Option<Vec<String>> = args["accounts"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|id| self.config.resolve_account(id))
+                    .collect()
+            });
+
+        let accounts = self.db.list_accounts().await?;
+        let mut all_calendars = Vec::new();
+
+        for account in &accounts {
+            // Skip if account filter is provided and this account isn't in it
+            if let Some(ref filter) = account_filter {
+                if !filter.contains(&account.id) {
+                    continue;
+                }
+            }
+
+            // Get access token for this account
+            let access_token = match self.oauth.get_valid_token(&account.id).await {
+                Ok(token) => token,
+                Err(e) => {
+                    warn!("Failed to get token for {}: {}", account.id, e);
+                    continue;
+                }
+            };
+
+            // Call Google Calendar API to list calendars
+            let client = reqwest::Client::new();
+            let response = client
+                .get("https://www.googleapis.com/calendar/v3/users/me/calendarList")
+                .bearer_auth(&access_token)
+                .send()
+                .await;
+
+            match response {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(items) = json["items"].as_array() {
+                            for item in items {
+                                all_calendars.push(serde_json::json!({
+                                    "account_id": account.id,
+                                    "account_alias": account.alias,
+                                    "id": item["id"],
+                                    "summary": item["summary"],
+                                    "description": item["description"],
+                                    "primary": item["primary"].as_bool().unwrap_or(false),
+                                    "access_role": item["accessRole"],
+                                    "background_color": item["backgroundColor"],
+                                    "foreground_color": item["foregroundColor"],
+                                    "selected": item["selected"].as_bool().unwrap_or(true),
+                                    "time_zone": item["timeZone"]
+                                }));
+                            }
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    warn!("Failed to list calendars for {}: {} - {}", account.id, status, body);
+                }
+                Err(e) => {
+                    warn!("Failed to list calendars for {}: {}", account.id, e);
+                }
+            }
+        }
+
         Ok(serde_json::json!({
-            "calendars": []
+            "calendars": all_calendars,
+            "count": all_calendars.len()
         }))
     }
 
-    /// Create a calendar event
+    /// Create a calendar event via Google Calendar API
     async fn create_event(&self, args: &Value) -> Result<Value> {
         let account = args["account"]
             .as_str()
@@ -1060,8 +1408,99 @@ Content-Type: text/html; charset=utf-8
             .resolve_account(account)
             .ok_or_else(|| Error::AccountNotFound(account.to_string()))?;
 
-        // TODO: Implement event creation via CalDAV
-        Err(Error::Other("Event creation not yet implemented".to_string()))
+        let summary = args["summary"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing summary (event title)".to_string()))?;
+
+        let start = args["start"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing start time (ISO 8601)".to_string()))?;
+
+        let end = args["end"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing end time (ISO 8601)".to_string()))?;
+
+        // Optional fields
+        let calendar_id = args["calendar_id"].as_str().unwrap_or("primary");
+        let description = args["description"].as_str();
+        let location = args["location"].as_str();
+        let attendees: Vec<String> = args["attendees"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        // Build the event object for Google Calendar API
+        let mut event_body = serde_json::json!({
+            "summary": summary,
+            "start": {
+                "dateTime": start,
+                "timeZone": "UTC"
+            },
+            "end": {
+                "dateTime": end,
+                "timeZone": "UTC"
+            }
+        });
+
+        if let Some(desc) = description {
+            event_body["description"] = serde_json::json!(desc);
+        }
+
+        if let Some(loc) = location {
+            event_body["location"] = serde_json::json!(loc);
+        }
+
+        if !attendees.is_empty() {
+            event_body["attendees"] = serde_json::json!(
+                attendees.iter().map(|email| serde_json::json!({"email": email})).collect::<Vec<_>>()
+            );
+        }
+
+        // Get access token
+        let access_token = self.oauth.get_valid_token(&account_email).await?;
+
+        // Create event via Google Calendar API
+        let client = reqwest::Client::new();
+        let url = format!(
+            "https://www.googleapis.com/calendar/v3/calendars/{}/events",
+            urlencoding::encode(calendar_id)
+        );
+
+        let response = client
+            .post(&url)
+            .bearer_auth(&access_token)
+            .json(&event_body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!(
+                "Failed to create event: {} - {}",
+                status, error_body
+            )));
+        }
+
+        let created_event: serde_json::Value = response.json().await?;
+        let event_id = created_event["id"].as_str().unwrap_or("unknown");
+        let html_link = created_event["htmlLink"].as_str();
+
+        info!("Created calendar event: {} for {}", event_id, account_email);
+
+        Ok(serde_json::json!({
+            "success": true,
+            "message": format!("Event '{}' created successfully", summary),
+            "event": {
+                "id": event_id,
+                "summary": summary,
+                "start": start,
+                "end": end,
+                "calendar_id": calendar_id,
+                "account": account_email,
+                "html_link": html_link
+            }
+        }))
     }
 
     /// Get sync status for all accounts

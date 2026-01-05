@@ -108,36 +108,6 @@ impl Database {
             *self.emails.write() = Some(table);
         } else {
             let table = self.connection.open_table(EMAILS_TABLE).execute().await?;
-
-            // Ensure indexes exist (may not exist for older databases)
-            // FTS indexes for BM25 search
-            match table
-                .create_index(&["subject"], Index::FTS(FtsIndexBuilder::default()))
-                .execute()
-                .await
-            {
-                Ok(_) => info!("Created FTS index on emails.subject"),
-                Err(e) => debug!("emails.subject FTS index: {}", e),
-            }
-            match table
-                .create_index(&["body_plain"], Index::FTS(FtsIndexBuilder::default()))
-                .execute()
-                .await
-            {
-                Ok(_) => info!("Created FTS index on emails.body_plain"),
-                Err(e) => debug!("emails.body_plain FTS index: {}", e),
-            }
-
-            // BTree index for fast id lookups
-            match table
-                .create_index(&["id"], Index::BTree(Default::default()))
-                .execute()
-                .await
-            {
-                Ok(_) => info!("Created BTree index on emails.id"),
-                Err(e) => debug!("emails.id index: {}", e),
-            }
-
             *self.emails.write() = Some(table);
         }
 
@@ -174,17 +144,6 @@ impl Database {
             *self.events.write() = Some(table);
         } else {
             let table = self.connection.open_table(EVENTS_TABLE).execute().await?;
-
-            // Ensure scalar index exists on id (may not exist for older databases)
-            match table
-                .create_index(&["id"], Index::BTree(Default::default()))
-                .execute()
-                .await
-            {
-                Ok(_) => info!("Created BTree index on events.id"),
-                Err(e) => debug!("events.id index: {}", e),
-            }
-
             *self.events.write() = Some(table);
         }
 
@@ -278,6 +237,124 @@ impl Database {
         }
 
         debug!("Refreshed table handles");
+        Ok(())
+    }
+
+    /// Ensure all indexes exist on tables
+    /// This should be called by the daemon after startup, not by read-only clients.
+    /// Indexes are created when tables are first created, but this handles upgrades
+    /// from older databases that may be missing indexes.
+    pub async fn ensure_indexes(&self) -> Result<()> {
+        // Emails table indexes
+        if let Ok(table) = self.emails_table() {
+            let existing_indices = table.list_indices().await.unwrap_or_default();
+            let existing_columns: std::collections::HashSet<_> = existing_indices
+                .iter()
+                .flat_map(|idx| idx.columns.clone())
+                .collect();
+
+            if !existing_columns.contains("subject") {
+                info!("Creating FTS index on emails.subject...");
+                if let Err(e) = table
+                    .create_index(&["subject"], Index::FTS(FtsIndexBuilder::default()))
+                    .execute()
+                    .await
+                {
+                    debug!("emails.subject FTS index: {}", e);
+                }
+            }
+
+            if !existing_columns.contains("body_plain") {
+                info!("Creating FTS index on emails.body_plain...");
+                if let Err(e) = table
+                    .create_index(&["body_plain"], Index::FTS(FtsIndexBuilder::default()))
+                    .execute()
+                    .await
+                {
+                    debug!("emails.body_plain FTS index: {}", e);
+                }
+            }
+
+            if !existing_columns.contains("id") {
+                info!("Creating BTree index on emails.id...");
+                if let Err(e) = table
+                    .create_index(&["id"], Index::BTree(Default::default()))
+                    .execute()
+                    .await
+                {
+                    debug!("emails.id index: {}", e);
+                }
+            }
+        }
+
+        // Events table indexes
+        if let Ok(table) = self.events_table() {
+            let existing_indices = table.list_indices().await.unwrap_or_default();
+            let existing_columns: std::collections::HashSet<_> = existing_indices
+                .iter()
+                .flat_map(|idx| idx.columns.clone())
+                .collect();
+
+            if !existing_columns.contains("id") {
+                info!("Creating BTree index on events.id...");
+                if let Err(e) = table
+                    .create_index(&["id"], Index::BTree(Default::default()))
+                    .execute()
+                    .await
+                {
+                    debug!("events.id index: {}", e);
+                }
+            }
+        }
+
+        debug!("Index check complete");
+        Ok(())
+    }
+
+    /// Rebuild FTS indexes to include newly added data
+    /// FTS indexes in LanceDB are not automatically updated when data is added,
+    /// so this should be called after sync batches complete.
+    pub async fn rebuild_fts_indexes(&self) -> Result<()> {
+        // Rebuild emails FTS indexes
+        if let Ok(table) = self.emails_table() {
+            debug!("Rebuilding FTS indexes on emails table...");
+            // create_index replaces existing index
+            if let Err(e) = table
+                .create_index(&["subject"], Index::FTS(FtsIndexBuilder::default()))
+                .execute()
+                .await
+            {
+                debug!("Failed to rebuild emails.subject FTS index: {}", e);
+            }
+            if let Err(e) = table
+                .create_index(&["body_plain"], Index::FTS(FtsIndexBuilder::default()))
+                .execute()
+                .await
+            {
+                debug!("Failed to rebuild emails.body_plain FTS index: {}", e);
+            }
+        }
+
+        // Rebuild events FTS indexes
+        if let Ok(table) = self.events_table() {
+            debug!("Rebuilding FTS indexes on events table...");
+            if let Err(e) = table
+                .create_index(&["summary"], Index::FTS(FtsIndexBuilder::default()))
+                .execute()
+                .await
+            {
+                debug!("Failed to rebuild events.summary FTS index: {}", e);
+            }
+            if let Err(e) = table
+                .create_index(&["description"], Index::FTS(FtsIndexBuilder::default()))
+                .execute()
+                .await
+            {
+                debug!("Failed to rebuild events.description FTS index: {}", e);
+            }
+        }
+
+        debug!("FTS index rebuild complete");
         Ok(())
     }
 
@@ -471,6 +548,40 @@ impl Database {
                 emails.push(batch_to_email(batch, i)?);
             }
         }
+
+        Ok(emails)
+    }
+
+    /// Get all emails in a thread by gmail_thread_id
+    pub async fn get_emails_by_thread(
+        &self,
+        thread_id: u64,
+        account_id: Option<&str>,
+    ) -> Result<Vec<Email>> {
+        let table = self.emails_table()?;
+
+        let mut filter = format!("gmail_thread_id = {}", thread_id);
+        if let Some(acct) = account_id {
+            filter.push_str(&format!(" AND account_id = '{}'", acct));
+        }
+
+        let results = table
+            .query()
+            .only_if(&filter)
+            .execute()
+            .await?;
+
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut emails = Vec::new();
+        for batch in &batches {
+            for i in 0..batch.num_rows() {
+                emails.push(batch_to_email(batch, i)?);
+            }
+        }
+
+        // Sort by date ascending (oldest first for thread view)
+        emails.sort_by(|a, b| a.date.cmp(&b.date));
 
         Ok(emails)
     }
@@ -802,7 +913,7 @@ impl Database {
 
         // Select all columns except the embedding vector for speed
         let columns = &[
-            "id", "account_id", "message_id", "thread_id", "folder",
+            "id", "account_id", "message_id", "gmail_thread_id", "folder",
             "subject", "from_email", "from_name", "to_list", "cc_list", "bcc_list",
             "date", "body_plain", "body_html", "snippet", "has_attachments",
             "attachment_count", "labels", "is_read", "is_starred", "raw_headers",
