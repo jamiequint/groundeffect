@@ -1,8 +1,8 @@
 class Groundeffect < Formula
-  desc "Local IMAP/CalDAV sync with MCP server for Claude Code"
+  desc "Hyper-fast, private email and calendar indexing for Claude Code"
   homepage "https://github.com/jamiequint/groundeffect"
   url "https://github.com/jamiequint/groundeffect/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "PLACEHOLDER_SHA256"
+  sha256 "ade6cb147722b31a4eaff2e0c87bcbded3bcb2a3e3cc71f7fd40be75a4b86f1c"
   license "MIT"
 
   depends_on "rust" => :build

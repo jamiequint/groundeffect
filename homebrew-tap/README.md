@@ -1,6 +1,10 @@
-# Homebrew Tap for GroundEffect
+# GroundEffect
 
-This is the official Homebrew tap for [GroundEffect](https://github.com/jamiequint/groundeffect), a local IMAP/CalDAV sync daemon with MCP server for Claude Code.
+Hyper-fast, private email and calendar indexing for Claude Code.
+
+GroundEffect is a local headless IMAP/CalDAV client and MCP Server for Claude Code built in Rust with LanceDB.
+
+This is the official Homebrew tap for [GroundEffect](https://github.com/jamiequint/groundeffect).
 
 ## Installation
 
