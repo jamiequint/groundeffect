@@ -109,15 +109,33 @@ impl Database {
         } else {
             let table = self.connection.open_table(EMAILS_TABLE).execute().await?;
 
-            // Ensure scalar index exists on id (may not exist for older databases)
-            // LanceDB silently ignores if index already exists
-            if let Err(e) = table
+            // Ensure indexes exist (may not exist for older databases)
+            // FTS indexes for BM25 search
+            match table
+                .create_index(&["subject"], Index::FTS(FtsIndexBuilder::default()))
+                .execute()
+                .await
+            {
+                Ok(_) => info!("Created FTS index on emails.subject"),
+                Err(e) => debug!("emails.subject FTS index: {}", e),
+            }
+            match table
+                .create_index(&["body_plain"], Index::FTS(FtsIndexBuilder::default()))
+                .execute()
+                .await
+            {
+                Ok(_) => info!("Created FTS index on emails.body_plain"),
+                Err(e) => debug!("emails.body_plain FTS index: {}", e),
+            }
+
+            // BTree index for fast id lookups
+            match table
                 .create_index(&["id"], Index::BTree(Default::default()))
                 .execute()
                 .await
             {
-                // Index may already exist, which is fine
-                debug!("Note: emails.id index creation returned: {}", e);
+                Ok(_) => info!("Created BTree index on emails.id"),
+                Err(e) => debug!("emails.id index: {}", e),
             }
 
             *self.emails.write() = Some(table);
@@ -158,12 +176,13 @@ impl Database {
             let table = self.connection.open_table(EVENTS_TABLE).execute().await?;
 
             // Ensure scalar index exists on id (may not exist for older databases)
-            if let Err(e) = table
+            match table
                 .create_index(&["id"], Index::BTree(Default::default()))
                 .execute()
                 .await
             {
-                debug!("Note: events.id index creation returned: {}", e);
+                Ok(_) => info!("Created BTree index on events.id"),
+                Err(e) => debug!("events.id index: {}", e),
             }
 
             *self.events.write() = Some(table);

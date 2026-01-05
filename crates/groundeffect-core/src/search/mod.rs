@@ -133,10 +133,12 @@ impl SearchEngine {
         let filter = options.build_filter();
 
         // Run BM25 and vector search in parallel
+        let search_start = std::time::Instant::now();
         let (bm25_results, vector_results) = tokio::join!(
             self.bm25_search_emails(&table, query, &filter, options.limit * 2),
             self.vector_search_emails(&table, query, &filter, options.limit * 2)
         );
+        info!("Search phase took {:?}", search_start.elapsed());
         let bm25_results = bm25_results?;
         let vector_results = vector_results?;
 
@@ -153,7 +155,9 @@ impl SearchEngine {
         let ids: Vec<String> = top_results.iter().map(|(id, _)| id.clone()).collect();
 
         // Batch fetch all emails in a single query
+        let fetch_start = std::time::Instant::now();
         let emails = self.db.get_emails_batch(&ids).await?;
+        info!("Batch fetch of {} emails took {:?}", ids.len(), fetch_start.elapsed());
 
         // Build a map for O(1) lookup while preserving RRF order
         let email_map: std::collections::HashMap<String, _> = emails
@@ -188,6 +192,7 @@ impl SearchEngine {
     ) -> Result<Vec<(String, f32)>> {
         use futures::TryStreamExt;
 
+        let start = std::time::Instant::now();
         let fts_query = FullTextSearchQuery::new(query.to_owned());
         let mut search = table.query().full_text_search(fts_query);
 
@@ -225,6 +230,7 @@ impl SearchEngine {
             }
         }
 
+        info!("BM25 search took {:?}, found {} results", start.elapsed(), scored_results.len());
         Ok(scored_results)
     }
 
@@ -238,8 +244,12 @@ impl SearchEngine {
     ) -> Result<Vec<(String, f32)>> {
         use futures::TryStreamExt;
 
+        let start = std::time::Instant::now();
+
         // Generate query embedding
+        let embed_start = std::time::Instant::now();
         let query_embedding = self.embedding_engine.embed(query)?;
+        info!("Query embedding took {:?}", embed_start.elapsed());
 
         let mut search = table.vector_search(query_embedding)?;
 
@@ -279,6 +289,7 @@ impl SearchEngine {
             }
         }
 
+        info!("Vector search took {:?}, found {} results", start.elapsed(), scored_results.len());
         Ok(scored_results)
     }
 

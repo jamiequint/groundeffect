@@ -830,9 +830,15 @@ Content-Type: text/html; charset=utf-8
         let results = self.search.search_emails(query, &options).await?;
         let search_time = start.elapsed().as_millis();
 
+        // If no account filter, show all accounts as searched
+        let accounts_searched = match &options.accounts {
+            Some(accts) => accts.clone(),
+            None => self.db.list_accounts().await?.into_iter().map(|a| a.id).collect(),
+        };
+
         Ok(serde_json::json!({
             "results": results,
-            "accounts_searched": options.accounts.unwrap_or_default(),
+            "accounts_searched": accounts_searched,
             "total_count": results.len(),
             "search_time_ms": search_time
         }))
@@ -1006,9 +1012,15 @@ Content-Type: text/html; charset=utf-8
         let results = self.search.search_calendar(query, &options).await?;
         let search_time = start.elapsed().as_millis();
 
+        // If no account filter, show all accounts as searched
+        let accounts_searched = match &options.accounts {
+            Some(accts) => accts.clone(),
+            None => self.db.list_accounts().await?.into_iter().map(|a| a.id).collect(),
+        };
+
         Ok(serde_json::json!({
             "results": results,
-            "accounts_searched": options.accounts.unwrap_or_default(),
+            "accounts_searched": accounts_searched,
             "total_count": results.len(),
             "search_time_ms": search_time
         }))

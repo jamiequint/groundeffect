@@ -136,7 +136,7 @@ impl McpServer {
         let result = match method.as_str() {
             // MCP protocol methods
             "initialize" => self.handle_initialize(&request.params).await,
-            "initialized" => Ok(Value::Null),
+            "initialized" | "notifications/initialized" => Ok(Value::Null),
             "ping" => Ok(Value::String("pong".to_string())),
 
             // Tool listing
