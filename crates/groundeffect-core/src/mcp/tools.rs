@@ -976,7 +976,14 @@ Content-Type: text/html; charset=utf-8
                 "snippet": e.snippet,
                 "folder": e.folder,
                 "is_read": e.is_read(),
-                "has_attachments": e.has_attachments()
+                "has_attachments": e.has_attachments(),
+                "attachments": e.attachments.iter().map(|a| serde_json::json!({
+                    "id": a.id,
+                    "filename": a.filename,
+                    "mime_type": a.mime_type,
+                    "size_human": a.size_human(),
+                    "downloaded": a.downloaded
+                })).collect::<Vec<_>>()
             })
         }).collect();
 
