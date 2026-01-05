@@ -898,22 +898,10 @@ Content-Type: text/html
                 .as_ref()
                 .and_then(|states| states.iter().find(|s| s.account_id == account.id));
 
-            let mut stat = serde_json::json!({
-                "id": account.id,
-                "alias": account.alias,
-                "status": format!("{:?}", account.status).to_lowercase(),
-                "last_email_sync": account.last_sync_email.map(|d| d.to_rfc3339()),
-                "last_calendar_sync": account.last_sync_calendar.map(|d| d.to_rfc3339()),
-                "email_count": email_count,
-                "event_count": event_count,
-                "attachment_count": 0 // TODO
-            });
-
-            // Add live sync progress if available
-            if let Some(progress_state) = live_progress {
-                stat["is_syncing"] = serde_json::json!(progress_state.is_syncing);
-                if let Some(ref progress) = progress_state.initial_sync_progress {
-                    stat["sync_progress"] = serde_json::json!({
+            // Build sync progress if available
+            let (is_syncing, sync_progress_json) = if let Some(progress_state) = live_progress {
+                let progress_json = progress_state.initial_sync_progress.as_ref().map(|progress| {
+                    serde_json::json!({
                         "phase": format!("{:?}", progress.phase),
                         "emails_synced": progress.emails_synced,
                         "total_emails_estimated": progress.total_emails_estimated,
@@ -922,9 +910,26 @@ Content-Type: text/html
                         "percentage_complete": progress.percentage_complete(),
                         "emails_per_second": progress.emails_per_second,
                         "estimated_seconds_remaining": progress.estimated_seconds_remaining()
-                    });
-                }
-            }
+                    })
+                });
+                (progress_state.is_syncing, progress_json)
+            } else {
+                (false, None)
+            };
+
+            // Always include all fields for consistent output
+            let stat = serde_json::json!({
+                "id": account.id,
+                "alias": account.alias,
+                "status": format!("{:?}", account.status).to_lowercase(),
+                "last_email_sync": account.last_sync_email.map(|d| d.to_rfc3339()),
+                "last_calendar_sync": account.last_sync_calendar.map(|d| d.to_rfc3339()),
+                "email_count": email_count,
+                "event_count": event_count,
+                "attachment_count": 0, // TODO
+                "is_syncing": is_syncing,
+                "sync_progress": sync_progress_json
+            });
 
             account_stats.push(stat);
         }
