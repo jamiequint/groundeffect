@@ -15,15 +15,32 @@ GroundEffect is a local headless IMAP/CalDav client and MCP Server for Claude Co
 ## Prerequisites
 
 - macOS or Linux (macOS with Metal acceleration recommended)
-- Rust toolchain (`rustup`)
+- Rust toolchain (`rustup`) - only needed if building from source
 - A Google Cloud project with OAuth 2.0 credentials (see setup below)
 
 ## Installation
 
-### 1. Build from source
+### Option A: Install via Homebrew (Recommended)
 
 ```bash
-git clone https://github.com/yourusername/groundeffect.git
+brew tap jamiequint/groundeffect
+brew install groundeffect
+```
+
+After installation, run the setup wizard:
+
+```bash
+groundeffect-daemon setup --install
+```
+
+This will:
+1. Configure daemon settings interactively
+2. Install a launchd agent for auto-start at login
+
+### Option B: Build from source
+
+```bash
+git clone https://github.com/jamiequint/groundeffect.git
 cd groundeffect
 cargo build --release
 ```
@@ -32,7 +49,7 @@ Binaries will be at:
 - `target/release/groundeffect-daemon` - Background sync daemon
 - `target/release/groundeffect-mcp` - MCP server for Claude Code
 
-### 2. Set up Google OAuth credentials
+### Set up Google OAuth credentials
 
 Each user needs their own Google Cloud OAuth credentials:
 
@@ -91,6 +108,16 @@ Add to your Claude Code config (`~/.claude.json`):
 
 ## Usage
 
+### Initial Setup (Homebrew install)
+
+If you installed via Homebrew, run the setup wizard:
+
+```bash
+groundeffect-daemon setup --install
+```
+
+This configures daemon settings and installs a launchd agent for auto-start.
+
 ### Add an account
 
 ```bash
@@ -105,7 +132,21 @@ This opens a browser for Google OAuth. After authentication, the account syncs a
 groundeffect-daemon
 ```
 
-For production, consider setting up a launchd agent to run at login.
+If you used `setup --install`, the daemon starts automatically at login via launchd.
+
+### Change settings
+
+```bash
+groundeffect-daemon configure
+```
+
+Interactively change logging, poll intervals, and other settings. Restarts the daemon if running via launchd.
+
+### Uninstall launchd agent
+
+```bash
+groundeffect-daemon setup --uninstall
+```
 
 ### Run MCP server (for Claude Code)
 
