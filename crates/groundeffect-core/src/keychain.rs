@@ -1,22 +1,24 @@
-//! macOS Keychain integration for secure OAuth token storage
+//! File-based OAuth token storage
+//!
+//! Stores tokens in ~/.config/groundeffect/tokens/<account>.json
+//! with 600 permissions (owner read/write only).
 
 use parking_lot::RwLock;
-use security_framework::passwords::{
-    delete_generic_password, get_generic_password, set_generic_password,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::sync::LazyLock;
 use tracing::{debug, error, info};
 
 use crate::error::{Error, Result};
-use crate::KEYCHAIN_SERVICE;
 
-/// In-memory token cache to avoid repeated keychain access prompts
+/// In-memory token cache to avoid repeated file reads
 static TOKEN_CACHE: LazyLock<RwLock<HashMap<String, OAuthTokens>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-/// OAuth tokens stored in keychain
+/// OAuth tokens stored on disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthTokens {
     /// Access token for API calls
@@ -47,21 +49,43 @@ impl OAuthTokens {
     }
 }
 
-/// Keychain manager for storing OAuth tokens
+/// Get the tokens directory path (XDG: ~/.config/groundeffect/tokens)
+fn tokens_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
+        .join("groundeffect")
+        .join("tokens")
+}
+
+/// Get the token file path for an account
+fn token_file_path(account_id: &str) -> PathBuf {
+    // Sanitize account_id for use as filename (replace @ and . with _)
+    let safe_name = account_id.replace('@', "_at_").replace('.', "_");
+    tokens_dir().join(format!("{}.json", safe_name))
+}
+
+/// Ensure the tokens directory exists with proper permissions
+fn ensure_tokens_dir() -> Result<()> {
+    let dir = tokens_dir();
+    if !dir.exists() {
+        fs::create_dir_all(&dir)?;
+        // Set directory permissions to 700 (owner rwx only)
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Token manager for storing OAuth tokens in files
 pub struct KeychainManager;
 
 impl KeychainManager {
-    /// Get the keychain service name for an account
-    fn service_name(account_id: &str) -> String {
-        format!("{}.{}", KEYCHAIN_SERVICE, account_id)
-    }
-
     /// Store OAuth tokens for an account
-    /// Only writes to keychain if refresh_token changed (to minimize password prompts)
+    /// Only writes to disk if refresh_token changed (to minimize disk I/O)
     pub fn store_tokens(account_id: &str, tokens: &OAuthTokens) -> Result<()> {
-        // Check if we need to write to keychain at all
+        // Check if we need to write to disk at all
         // Only write if refresh_token changed (access_token changes are cached in memory)
-        let needs_keychain_write = {
+        let needs_disk_write = {
             let cache = TOKEN_CACHE.read();
             match cache.get(account_id) {
                 Some(cached) => cached.refresh_token != tokens.refresh_token,
@@ -69,33 +93,43 @@ impl KeychainManager {
             }
         };
 
-        // Always update the in-memory cache (this is fast and prompt-free)
+        // Always update the in-memory cache
         TOKEN_CACHE
             .write()
             .insert(account_id.to_string(), tokens.clone());
 
-        if needs_keychain_write {
-            let service = Self::service_name(account_id);
-            let data = serde_json::to_string(tokens)?;
+        if needs_disk_write {
+            ensure_tokens_dir()?;
+            let path = token_file_path(account_id);
+            let data = serde_json::to_string_pretty(tokens)?;
 
-            // Try to delete existing first (ignore errors)
-            let _ = delete_generic_password(&service, account_id);
-
-            set_generic_password(&service, account_id, data.as_bytes()).map_err(|e| {
-                error!("Failed to store tokens in keychain: {}", e);
-                Error::Keychain(format!("Failed to store tokens: {}", e))
+            fs::write(&path, &data).map_err(|e| {
+                error!("Failed to write token file: {}", e);
+                Error::Token(format!("Failed to store tokens: {}", e))
             })?;
 
-            debug!("Stored OAuth tokens for {} (keychain updated)", account_id);
+            // Set file permissions to 600 (owner rw only)
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+                error!("Failed to set token file permissions: {}", e);
+                Error::Token(format!("Failed to set permissions: {}", e))
+            })?;
+
+            debug!(
+                "Stored OAuth tokens for {} (disk updated)",
+                account_id
+            );
         } else {
-            debug!("Stored OAuth tokens for {} (cache only, refresh_token unchanged)", account_id);
+            debug!(
+                "Stored OAuth tokens for {} (cache only, refresh_token unchanged)",
+                account_id
+            );
         }
 
         Ok(())
     }
 
     /// Retrieve OAuth tokens for an account
-    /// Uses in-memory cache to avoid repeated keychain access prompts
+    /// Uses in-memory cache to avoid repeated file reads
     pub fn get_tokens(account_id: &str) -> Result<Option<OAuthTokens>> {
         // Check the in-memory cache first
         if let Some(tokens) = TOKEN_CACHE.read().get(account_id) {
@@ -103,61 +137,52 @@ impl KeychainManager {
             return Ok(Some(tokens.clone()));
         }
 
-        // Not in cache, read from keychain
-        let service = Self::service_name(account_id);
+        // Not in cache, read from disk
+        let path = token_file_path(account_id);
 
-        match get_generic_password(&service, account_id) {
+        if !path.exists() {
+            debug!("No tokens found for {}", account_id);
+            return Ok(None);
+        }
+
+        match fs::read_to_string(&path) {
             Ok(data) => {
-                let json = String::from_utf8(data).map_err(|e| {
-                    Error::Keychain(format!("Invalid token data encoding: {}", e))
+                let tokens: OAuthTokens = serde_json::from_str(&data).map_err(|e| {
+                    Error::Token(format!("Invalid token data: {}", e))
                 })?;
-                let tokens: OAuthTokens = serde_json::from_str(&json)?;
 
                 // Cache the tokens for future calls
                 TOKEN_CACHE
                     .write()
                     .insert(account_id.to_string(), tokens.clone());
 
-                debug!("Retrieved OAuth tokens for {} from keychain", account_id);
+                debug!("Retrieved OAuth tokens for {} from disk", account_id);
                 Ok(Some(tokens))
             }
             Err(e) => {
-                // Check if it's a "not found" error
-                let error_str = e.to_string();
-                if error_str.contains("not found") || error_str.contains("-25300") {
-                    debug!("No tokens found for {}", account_id);
-                    Ok(None)
-                } else {
-                    error!("Failed to get tokens from keychain: {}", e);
-                    Err(Error::Keychain(format!("Failed to get tokens: {}", e)))
-                }
+                error!("Failed to read token file: {}", e);
+                Err(Error::Token(format!("Failed to read tokens: {}", e)))
             }
         }
     }
 
     /// Delete OAuth tokens for an account
     pub fn delete_tokens(account_id: &str) -> Result<()> {
-        let service = Self::service_name(account_id);
-
         // Clear from cache first
         TOKEN_CACHE.write().remove(account_id);
 
-        match delete_generic_password(&service, account_id) {
-            Ok(_) => {
-                info!("Deleted OAuth tokens for {}", account_id);
-                Ok(())
-            }
-            Err(e) => {
-                let error_str = e.to_string();
-                if error_str.contains("not found") || error_str.contains("-25300") {
-                    debug!("No tokens to delete for {}", account_id);
-                    Ok(())
-                } else {
-                    error!("Failed to delete tokens from keychain: {}", e);
-                    Err(Error::Keychain(format!("Failed to delete tokens: {}", e)))
-                }
-            }
+        let path = token_file_path(account_id);
+        if path.exists() {
+            fs::remove_file(&path).map_err(|e| {
+                error!("Failed to delete token file: {}", e);
+                Error::Token(format!("Failed to delete tokens: {}", e))
+            })?;
+            info!("Deleted OAuth tokens for {}", account_id);
+        } else {
+            debug!("No tokens to delete for {}", account_id);
         }
+
+        Ok(())
     }
 
     /// Update just the access token (after refresh)
@@ -167,7 +192,7 @@ impl KeychainManager {
         expires_at: i64,
     ) -> Result<()> {
         let mut tokens = Self::get_tokens(account_id)?
-            .ok_or_else(|| Error::Keychain("No existing tokens to update".to_string()))?;
+            .ok_or_else(|| Error::Token("No existing tokens to update".to_string()))?;
 
         tokens.access_token = access_token.to_string();
         tokens.expires_at = expires_at;
@@ -225,5 +250,11 @@ mod tests {
         };
         assert!(soon_expired_tokens.is_expired()); // Within 5-minute grace period
         assert!(!soon_expired_tokens.is_definitely_expired());
+    }
+
+    #[test]
+    fn test_token_file_path() {
+        let path = token_file_path("test@example.com");
+        assert!(path.to_string_lossy().contains("test_at_example_com.json"));
     }
 }

@@ -75,17 +75,13 @@ async fn main() -> Result<()> {
                 .unwrap_or(false);
 
         if enable_logging {
-            // File logging to macOS standard location
-            let log_dir = directories::ProjectDirs::from("com", "groundeffect", "groundeffect")
-                .map(|dirs| dirs.data_dir().join("logs"))
-                .unwrap_or_else(|| {
-                    dirs::home_dir()
-                        .unwrap_or_default()
-                        .join("Library")
-                        .join("Application Support")
-                        .join("com.groundeffect.groundeffect")
-                        .join("logs")
-                });
+            // File logging to XDG data directory (~/.local/share/groundeffect/logs)
+            let log_dir = dirs::home_dir()
+                .unwrap_or_default()
+                .join(".local")
+                .join("share")
+                .join("groundeffect")
+                .join("logs");
             std::fs::create_dir_all(&log_dir).ok();
 
             let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "daemon.log");
@@ -213,7 +209,7 @@ Content-Type: text/html
     // Store tokens in keychain
     KeychainManager::store_tokens(&user_info.email, &tokens)?;
 
-    println!("✅ Tokens stored in macOS Keychain\n");
+    println!("✅ Tokens stored securely\n");
 
     // Load config and open database
     let config = Config::load().unwrap_or_default();
@@ -444,14 +440,13 @@ async fn run_daemon() -> Result<()> {
             Ok(_) => {
                 info!("Initialized sync for account {}", account.id);
 
-                // Check if we need to do initial sync (no emails yet)
-                let email_count = db.count_emails(Some(&account.id)).await.unwrap_or(0);
-                if email_count == 0 {
-                    info!("No emails found, running initial sync for {}", account.id);
-                    match sync_manager.initial_sync(&account.id).await {
-                        Ok(_) => info!("Initial sync completed for {}", account.id),
-                        Err(e) => error!("Initial sync failed for {}: {}", account.id, e),
-                    }
+                // Always run initial_sync - it will decide whether to:
+                // - Skip (if historical sync already complete)
+                // - Resume (if partially synced)
+                // - Start fresh (if no emails)
+                match sync_manager.initial_sync(&account.id).await {
+                    Ok(_) => info!("Sync check completed for {}", account.id),
+                    Err(e) => error!("Sync failed for {}: {}", account.id, e),
                 }
 
                 // Start IMAP IDLE for real-time notifications

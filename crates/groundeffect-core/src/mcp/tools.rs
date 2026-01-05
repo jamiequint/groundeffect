@@ -56,7 +56,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "years_to_sync": {
                         "type": "string",
-                        "description": "IMPORTANT: Ask the user before proceeding. How many years of email/calendar history to sync: '1'-'20' for specific years, or 'all' for entire history. More years = longer initial sync time.",
+                        "description": "IMPORTANT: Ask the user before proceeding. How many years of email/calendar history to sync: '1'-'20' for specific years, or 'all' for entire history. More years = longer initial sync time. More can be synced later with extend_sync_range.",
                         "default": "1"
                     }
                 }
@@ -751,6 +751,9 @@ Content-Type: text/html
         }))
     }
 
+    /// Maximum body size in chars (~62K tokens, 80% of safe context limit)
+    const MAX_BODY_CHARS: usize = 250_000;
+
     /// Get a single email
     async fn get_email(&self, args: &Value) -> Result<Value> {
         let id = args["id"]
@@ -763,7 +766,55 @@ Content-Type: text/html
             .await?
             .ok_or_else(|| Error::EmailNotFound(id.to_string()))?;
 
-        Ok(serde_json::to_value(&email)?)
+        // Get body text: prefer plain, extract from HTML if needed
+        let body = if !email.body_plain.trim().is_empty() {
+            email.body_plain.clone()
+        } else if let Some(html) = &email.body_html {
+            html2text::from_read(html.as_bytes(), 80).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        // Check if truncation needed
+        let total_chars = body.len();
+        let (body_text, truncated) = if total_chars > Self::MAX_BODY_CHARS {
+            // Truncate at char boundary
+            let truncated_body = body.char_indices()
+                .take_while(|(i, _)| *i < Self::MAX_BODY_CHARS)
+                .map(|(_, c)| c)
+                .collect::<String>();
+            (truncated_body, true)
+        } else {
+            (body, false)
+        };
+
+        // Build response excluding body_html (embedding already skipped via #[serde(skip)])
+        let mut response = serde_json::json!({
+            "id": email.id,
+            "account_id": email.account_id,
+            "account_alias": email.account_alias,
+            "message_id": email.message_id,
+            "gmail_thread_id": email.gmail_thread_id,
+            "folder": email.folder,
+            "labels": email.labels,
+            "from": email.from,
+            "to": email.to,
+            "cc": email.cc,
+            "subject": email.subject,
+            "date": email.date,
+            "body": body_text,
+            "snippet": email.snippet,
+            "attachments": email.attachments,
+            "is_read": email.is_read(),
+            "is_flagged": email.is_flagged(),
+        });
+
+        if truncated {
+            response["truncated"] = serde_json::json!(true);
+            response["total_body_chars"] = serde_json::json!(total_chars);
+        }
+
+        Ok(response)
     }
 
     /// Get all emails in a thread
@@ -928,6 +979,8 @@ Content-Type: text/html
                 "id": account.id,
                 "alias": account.alias,
                 "status": format!("{:?}", account.status).to_lowercase(),
+                "sync_target_date": account.sync_email_since.map(|d| d.format("%Y-%m-%d").to_string()),
+                "oldest_email_synced": account.oldest_email_synced.map(|d| d.format("%Y-%m-%d").to_string()),
                 "last_email_sync": account.last_sync_email.map(format_local_time),
                 "last_calendar_sync": account.last_sync_calendar.map(format_local_time),
                 "email_count": email_count,

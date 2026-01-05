@@ -1,6 +1,6 @@
 # GroundEffect
 
-A hyper-fast IMAP/CalDAV client and local MCP server for macOS. Syncs Gmail and Google Calendar locally for instant search via Claude Code.
+A hyper-fast IMAP/CalDAV client and local MCP server. Syncs Gmail and Google Calendar locally for instant search via Claude Code.
 
 ## Features
 
@@ -12,7 +12,7 @@ A hyper-fast IMAP/CalDAV client and local MCP server for macOS. Syncs Gmail and 
 
 ## Prerequisites
 
-- macOS (Apple Silicon or Intel with Metal support)
+- macOS or Linux (macOS with Metal acceleration recommended)
 - Rust toolchain (`rustup`)
 - A Google Cloud project with OAuth 2.0 credentials (see setup below)
 
@@ -87,36 +87,6 @@ Add to your Claude Code config (`~/.claude.json`):
 }
 ```
 
-## macOS Keychain Setup
-
-GroundEffect stores OAuth tokens in the macOS Keychain. On first use, you'll be prompted to allow access.
-
-### Reducing Keychain Prompts
-
-To avoid repeated password prompts:
-
-1. When the Keychain prompt appears, click **Always Allow**
-2. If you still get prompts, open **Keychain Access** app:
-   - Find items starting with `groundeffect.oauth.`
-   - Double-click each item
-   - Go to **Access Control** tab
-   - Add `groundeffect` to the list of allowed applications
-   - Or select **Allow all applications to access this item**
-
-### Keychain Locked?
-
-If you see errors about keychain access, your keychain may be locked:
-
-```bash
-security unlock-keychain ~/Library/Keychains/login.keychain-db
-```
-
-### Token Storage
-
-Tokens are stored per-account:
-- Keychain item: `groundeffect.oauth.{email-address}`
-- Contains: access token, refresh token, expiry
-
 ## Usage
 
 ### Add an account
@@ -161,7 +131,7 @@ Once connected, Claude Code has access to 18 tools organized into these categori
 |------|-------------|
 | `search_emails` | Hybrid BM25 + vector search across emails with filters (folder, from, to, date range, attachments) |
 | `list_recent_emails` | List recent emails sorted by date (fast, no search overhead) |
-| `get_email` | Fetch single email by ID with full content |
+| `get_email` | Fetch single email by ID with full content. Uses plain text when available, extracts text from HTML otherwise. Truncates with `truncated: true` flag only if the resulting text exceeds 250K chars |
 | `get_thread` | Fetch all emails in a Gmail thread |
 | `list_folders` | List all IMAP folders for accounts |
 
@@ -240,12 +210,12 @@ Both the daemon and MCP server can optionally write logs for debugging. Logging 
 
 ### Log Files
 
-Logs are written to the macOS standard location:
+Logs are written to the XDG data directory:
 
 | Component | Log File | Purpose |
 |-----------|----------|---------|
-| Daemon | `~/Library/Application Support/com.groundeffect.groundeffect/logs/daemon.log` | Sync operations, IMAP/CalDAV activity |
-| MCP Server | `~/Library/Application Support/com.groundeffect.groundeffect/logs/mcp.log` | MCP tool calls, search queries |
+| Daemon | `~/.local/share/groundeffect/logs/daemon.log` | Sync operations, IMAP/CalDAV activity |
+| MCP Server | `~/.local/share/groundeffect/logs/mcp.log` | MCP tool calls, search queries |
 
 Logs use daily rotation and include timestamps, thread IDs, and target module information.
 
@@ -302,11 +272,16 @@ This enables logging for both:
 ## Data Storage
 
 ```
+~/.config/groundeffect/
+├── config.toml            # Configuration file
+└── tokens/                # OAuth tokens (chmod 600)
+    └── user_at_gmail_com.json
+
 ~/.local/share/groundeffect/
-├── data/
-│   ├── lancedb/           # LanceDB database (emails, events, accounts)
-│   ├── attachments/       # Downloaded attachments
-│   └── models/            # Embedding model files
+├── lancedb/               # LanceDB database (emails, events, accounts)
+├── attachments/           # Downloaded attachments
+├── models/                # Embedding model files
+├── logs/                  # Log files (if enabled)
 └── cache/
     └── sync_state/        # Per-account sync state
 ```

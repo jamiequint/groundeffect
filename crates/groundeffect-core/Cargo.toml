@@ -39,9 +39,6 @@ serde_json = { workspace = true }
 # Rate limiting
 governor = { workspace = true }
 
-# macOS Keychain
-security-framework = { workspace = true }
-
 # Utilities
 chrono = { workspace = true }
 uuid = { workspace = true }
@@ -63,6 +60,7 @@ base64 = { workspace = true }
 url = { workspace = true }
 open = { workspace = true }
 urlencoding = { workspace = true }
+html2text = { workspace = true }
 
 [features]
 default = ["metal"]

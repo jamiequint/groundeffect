@@ -1,7 +1,6 @@
 //! Configuration management for GroundEffect
 
 use crate::error::{Error, Result};
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -238,34 +237,21 @@ fn default_recent_items() -> usize {
     5
 }
 
-/// Get the project directories
-fn get_project_dirs() -> Option<ProjectDirs> {
-    ProjectDirs::from("com", "groundeffect", "groundeffect")
-}
-
-/// Get the data directory
+/// Get the data directory (XDG: ~/.local/share/groundeffect)
 fn get_data_dir() -> PathBuf {
-    get_project_dirs()
-        .map(|dirs| dirs.data_dir().to_path_buf())
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".local")
-                .join("share")
-                .join("groundeffect")
-        })
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".local")
+        .join("share")
+        .join("groundeffect")
 }
 
-/// Get the config directory
+/// Get the config directory (XDG: ~/.config/groundeffect)
 fn get_config_dir() -> PathBuf {
-    get_project_dirs()
-        .map(|dirs| dirs.config_dir().to_path_buf())
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".config")
-                .join("groundeffect")
-        })
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
+        .join("groundeffect")
 }
 
 impl Config {

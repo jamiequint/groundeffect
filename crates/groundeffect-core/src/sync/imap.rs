@@ -17,6 +17,11 @@ use crate::oauth::OAuthManager;
 
 use super::{GlobalRateLimiter, SyncEvent};
 
+/// Retry configuration
+const MAX_RETRIES: u32 = 3;
+const INITIAL_RETRY_DELAY_MS: u64 = 1000;
+const MAX_RETRY_DELAY_MS: u64 = 30000;
+
 /// XOAUTH2 authenticator for IMAP
 struct XOAuth2Auth {
     auth_string: String,
@@ -59,6 +64,33 @@ impl ImapClient {
             oauth,
             rate_limiter,
         })
+    }
+
+    /// Connect to Gmail IMAP with retry logic
+    async fn connect_with_retry(&self) -> Result<ImapSession> {
+        let mut last_error = None;
+        let mut delay_ms = INITIAL_RETRY_DELAY_MS;
+
+        for attempt in 1..=MAX_RETRIES {
+            match self.connect().await {
+                Ok(session) => return Ok(session),
+                Err(e) => {
+                    warn!(
+                        "IMAP connection attempt {}/{} failed for {}: {}",
+                        attempt, MAX_RETRIES, self.account_id, e
+                    );
+                    last_error = Some(e);
+
+                    if attempt < MAX_RETRIES {
+                        info!("Retrying in {}ms...", delay_ms);
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        delay_ms = (delay_ms * 2).min(MAX_RETRY_DELAY_MS);
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| Error::Imap("Connection failed after retries".to_string())))
     }
 
     /// Connect to Gmail IMAP
@@ -144,7 +176,7 @@ impl ImapClient {
         Ok(count)
     }
 
-    /// Fetch all emails since a date, newest first, in a single connection
+    /// Fetch all emails since a date, newest first, with automatic reconnection on failure
     /// Returns emails in batches via callback to allow incremental processing
     pub async fn fetch_all_emails_since<F, Fut>(
         &self,
@@ -156,13 +188,18 @@ impl ImapClient {
         F: FnMut(Vec<Email>) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
-        let mut session = self.connect().await?;
+        // Connect with retry
+        let mut session = self.connect_with_retry().await?;
 
         // Select INBOX
-        session
-            .select("INBOX")
-            .await
-            .map_err(|e| Error::Imap(format!("Failed to select INBOX: {:?}", e)))?;
+        if let Err(e) = session.select("INBOX").await {
+            warn!("First select INBOX failed, reconnecting: {:?}", e);
+            session = self.connect_with_retry().await?;
+            session
+                .select("INBOX")
+                .await
+                .map_err(|e| Error::Imap(format!("Failed to select INBOX after reconnect: {:?}", e)))?;
+        }
 
         // Search for emails since the given date
         let since_str = since.format("%d-%b-%Y").to_string();
@@ -186,9 +223,13 @@ impl ImapClient {
             return Ok(0);
         }
 
-        // Fetch in batches, keeping the same connection
+        // Fetch in batches, with reconnection on failure
         let mut total_fetched = 0;
-        for uid_batch in uids.chunks(batch_size) {
+        let mut batch_index = 0;
+        let uid_batches: Vec<Vec<u32>> = uids.chunks(batch_size).map(|c| c.to_vec()).collect();
+
+        while batch_index < uid_batches.len() {
+            let uid_batch = &uid_batches[batch_index];
             let uid_range = uid_batch
                 .iter()
                 .map(|u| u.to_string())
@@ -196,28 +237,84 @@ impl ImapClient {
                 .join(",");
 
             self.rate_limiter.wait().await;
-            let messages = session
-                .uid_fetch(&uid_range, "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)")
-                .await
-                .map_err(|e| Error::Imap(format!("Fetch failed: {:?}", e)))?;
 
-            // Collect messages
-            use futures::StreamExt;
-            let fetches: Vec<_> = messages.collect().await;
+            // Try to fetch the batch - we need to handle reconnection carefully
+            // to avoid borrow checker issues with the session
+            let fetches: Vec<_> = {
+                use futures::StreamExt;
+                match session
+                    .uid_fetch(&uid_range, "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)")
+                    .await
+                {
+                    Ok(messages) => messages.collect().await,
+                    Err(e) => {
+                        warn!("Fetch failed for batch {}, will reconnect: {:?}", batch_index, e);
+                        vec![] // Empty vec signals we need to reconnect
+                    }
+                }
+            };
 
-            // Parse emails
+            // If fetch failed (empty result), reconnect and retry
+            let fetches = if fetches.is_empty() && !uid_batch.is_empty() {
+                // Reconnect with retry
+                session = match self.connect_with_retry().await {
+                    Ok(s) => s,
+                    Err(reconnect_err) => {
+                        error!("Failed to reconnect after fetch error: {}", reconnect_err);
+                        return Err(reconnect_err);
+                    }
+                };
+
+                // Re-select INBOX
+                if let Err(select_err) = session.select("INBOX").await {
+                    error!("Failed to re-select INBOX: {:?}", select_err);
+                    return Err(Error::Imap(format!("Failed to re-select INBOX: {:?}", select_err)));
+                }
+
+                // Retry this batch
+                self.rate_limiter.wait().await;
+                use futures::StreamExt;
+                match session
+                    .uid_fetch(&uid_range, "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)")
+                    .await
+                {
+                    Ok(messages) => messages.collect().await,
+                    Err(retry_err) => {
+                        error!("Fetch still failed after reconnect: {:?}", retry_err);
+                        // Skip this batch and continue with the next one
+                        warn!("Skipping batch {} ({} emails) due to persistent error", batch_index, uid_batch.len());
+                        batch_index += 1;
+                        continue;
+                    }
+                }
+            } else {
+                fetches
+            };
+
+            // Parse emails, handling individual failures gracefully
             let mut emails = Vec::new();
+            let mut parse_errors = 0;
             for result in fetches {
                 match result {
                     Ok(fetch) => {
-                        if let Some(email) = self.parse_fetch(&fetch)? {
-                            emails.push(email);
+                        match self.parse_fetch(&fetch) {
+                            Ok(Some(email)) => emails.push(email),
+                            Ok(None) => {} // No email parsed (missing UID or body)
+                            Err(e) => {
+                                parse_errors += 1;
+                                debug!("Failed to parse email: {}", e);
+                            }
                         }
                     }
                     Err(e) => {
-                        warn!("Error fetching message: {:?}", e);
+                        parse_errors += 1;
+                        debug!("Error in fetch stream: {:?}", e);
                     }
                 }
+            }
+
+            if parse_errors > 0 {
+                warn!("Skipped {} emails due to parse errors in batch {}", parse_errors, batch_index);
             }
 
             // Sort by date descending
@@ -229,7 +326,14 @@ impl ImapClient {
             info!("Fetched batch of {} emails ({}/{}) for {}", batch_count, total_fetched, total_count, self.account_id);
 
             // Call the callback with this batch
-            on_batch(emails).await?;
+            if !emails.is_empty() {
+                if let Err(e) = on_batch(emails).await {
+                    // Log error but continue - emails will be refetched on next sync resume
+                    error!("Batch {} callback failed, will be retried on next sync: {}", batch_index, e);
+                }
+            }
+
+            batch_index += 1;
         }
 
         session.logout().await.ok();

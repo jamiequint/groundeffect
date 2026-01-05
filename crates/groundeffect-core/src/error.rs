@@ -28,8 +28,8 @@ pub enum Error {
     #[error("Token refresh failed for account {account}: {reason}")]
     TokenRefreshFailed { account: String, reason: String },
 
-    #[error("Keychain error: {0}")]
-    Keychain(String),
+    #[error("Token storage error: {0}")]
+    Token(String),
 
     // Sync errors
     #[error("IMAP error: {0}")]
@@ -37,6 +37,9 @@ pub enum Error {
 
     #[error("CalDAV error: {0}")]
     CalDav(String),
+
+    #[error("Sync error: {0}")]
+    Sync(String),
 
     #[error("Connection failed to {host}: {reason}")]
     ConnectionFailed { host: String, reason: String },
@@ -135,7 +138,7 @@ impl Error {
             Error::ResourceNotFound(_) => "RESOURCE_NOT_FOUND",
             Error::RateLimited { .. } => "RATE_LIMITED",
             Error::Database(_) | Error::Arrow(_) => "DATABASE_ERROR",
-            Error::Imap(_) | Error::CalDav(_) | Error::ConnectionFailed { .. } => "SYNC_ERROR",
+            Error::Imap(_) | Error::CalDav(_) | Error::Sync(_) | Error::ConnectionFailed { .. } => "SYNC_ERROR",
             _ => "INTERNAL_ERROR",
         }
     }

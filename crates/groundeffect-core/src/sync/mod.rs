@@ -223,6 +223,14 @@ impl SyncManager {
     pub async fn initial_sync(&self, account_id: &str) -> Result<()> {
         info!("Starting initial sync for {}", account_id);
 
+        // Mark as syncing
+        {
+            let mut states = self.account_states.write();
+            if let Some(state) = states.get_mut(account_id) {
+                state.is_syncing = true;
+            }
+        }
+
         // Get account's sync_email_since preference, default to 90 days
         let account = self.db.get_account(account_id).await?
             .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
@@ -311,7 +319,7 @@ impl SyncManager {
                 sync_type: SyncType::Email,
             }).await;
 
-            let batch_size = 50; // Fetch in batches for progress tracking
+            let batch_size = 256; // Fetch in batches (aligns with embedding batch size of 128)
             let sync_start = std::time::Instant::now();
 
             // State for progress tracking (shared with callback)
@@ -325,6 +333,7 @@ impl SyncManager {
             let embedding_clone = self.embedding.clone();
             let existing_ids_clone = existing_message_ids.clone();
             let target_since_clone = target_since;
+            let progress_file_path = self.config.sync_progress_file();
 
             // Use single connection to fetch all emails since target date
             let result = imap_client.fetch_all_emails_since(target_since, batch_size, |emails| {
@@ -336,6 +345,7 @@ impl SyncManager {
                 let embedding = embedding_clone.clone();
                 let sync_start = sync_start.clone();
                 let existing_ids = existing_ids_clone.clone();
+                let progress_path = progress_file_path.clone();
 
                 async move {
                     // Filter out emails we already have (by message_id)
@@ -350,12 +360,42 @@ impl SyncManager {
                     }
 
                     let batch_count = new_emails.len();
+                    let mut successfully_stored = 0;
 
                     // Generate embeddings in batches for performance
                     const EMBED_BATCH_SIZE: usize = 128;
+                    const MAX_EMBED_RETRIES: u32 = 3;
+
                     for embed_chunk in new_emails.chunks(EMBED_BATCH_SIZE) {
                         let texts: Vec<String> = embed_chunk.iter().map(|e| e.searchable_text()).collect();
-                        let embeddings = embedding.embed_batch(&texts)?;
+
+                        // Retry embedding with exponential backoff
+                        let mut embeddings_result = None;
+                        let mut last_error = None;
+                        for attempt in 1..=MAX_EMBED_RETRIES {
+                            match embedding.embed_batch(&texts) {
+                                Ok(emb) => {
+                                    embeddings_result = Some(emb);
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!("Embedding attempt {}/{} failed: {}", attempt, MAX_EMBED_RETRIES, e);
+                                    last_error = Some(e);
+                                    if attempt < MAX_EMBED_RETRIES {
+                                        let delay = 1000 * (1 << (attempt - 1)); // 1s, 2s, 4s
+                                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                                    }
+                                }
+                            }
+                        }
+
+                        let embeddings = match embeddings_result {
+                            Some(emb) => emb,
+                            None => {
+                                error!("Failed to embed batch after {} retries, skipping {} emails", MAX_EMBED_RETRIES, embed_chunk.len());
+                                continue; // Skip this chunk but continue with others
+                            }
+                        };
 
                         let emails_with_embeddings: Vec<Email> = embed_chunk
                             .iter()
@@ -367,28 +407,67 @@ impl SyncManager {
                             })
                             .collect();
 
-                        db.upsert_emails(&emails_with_embeddings).await?;
+                        // Retry database upsert with exponential backoff
+                        let mut db_success = false;
+                        for attempt in 1..=MAX_EMBED_RETRIES {
+                            match db.upsert_emails(&emails_with_embeddings).await {
+                                Ok(_) => {
+                                    db_success = true;
+                                    successfully_stored += emails_with_embeddings.len();
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!("DB upsert attempt {}/{} failed: {}", attempt, MAX_EMBED_RETRIES, e);
+                                    if attempt < MAX_EMBED_RETRIES {
+                                        let delay = 1000 * (1 << (attempt - 1));
+                                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                                    }
+                                }
+                            }
+                        }
+
+                        if !db_success {
+                            error!("Failed to store batch after {} retries, {} emails may be lost", MAX_EMBED_RETRIES, emails_with_embeddings.len());
+                        }
                     }
 
-                    let prev = total_synced.fetch_add(batch_count, std::sync::atomic::Ordering::SeqCst);
-                    let new_total = prev + batch_count;
-                    total_new.fetch_add(batch_count, std::sync::atomic::Ordering::SeqCst);
-                    info!("Embedded and stored {} new emails (total: {}) for {}", batch_count, new_total, account_id);
+                    if successfully_stored == 0 && batch_count > 0 {
+                        return Err(Error::Sync(format!("Failed to store any emails from batch of {}", batch_count)));
+                    }
 
-                    // Update progress
+                    let prev = total_synced.fetch_add(successfully_stored, std::sync::atomic::Ordering::SeqCst);
+                    let new_total = prev + successfully_stored;
+                    total_new.fetch_add(successfully_stored, std::sync::atomic::Ordering::SeqCst);
+
+                    if successfully_stored < batch_count {
+                        warn!("Stored {}/{} emails for {} (some failed)", successfully_stored, batch_count, account_id);
+                    } else {
+                        info!("Embedded and stored {} new emails (total: {}) for {}", successfully_stored, new_total, account_id);
+                    }
+
+                    // Update progress and write to file for MCP to read
                     {
                         let elapsed = sync_start.elapsed().as_secs_f64();
-                        let mut states = account_states.write();
-                        if let Some(state) = states.get_mut(&account_id) {
-                            state.email_count = new_total as u64;
-                            if let Some(ref mut progress) = state.initial_sync_progress {
-                                progress.emails_synced = new_total as u64;
-                                progress.emails_per_second = if elapsed > 0.0 {
-                                    new_total as f64 / elapsed
-                                } else {
-                                    0.0
-                                };
+                        let states_snapshot: Vec<AccountSyncState>;
+                        {
+                            let mut states = account_states.write();
+                            if let Some(state) = states.get_mut(&account_id) {
+                                state.email_count = new_total as u64;
+                                if let Some(ref mut progress) = state.initial_sync_progress {
+                                    progress.emails_synced = new_total as u64;
+                                    progress.emails_per_second = if elapsed > 0.0 {
+                                        new_total as f64 / elapsed
+                                    } else {
+                                        0.0
+                                    };
+                                }
                             }
+                            states_snapshot = states.values().cloned().collect();
+                        }
+
+                        // Write progress file for MCP to read live status
+                        if let Ok(json) = serde_json::to_string_pretty(&states_snapshot) {
+                            let _ = std::fs::write(&progress_path, json);
                         }
                     }
 

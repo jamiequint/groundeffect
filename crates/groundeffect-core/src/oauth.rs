@@ -21,15 +21,73 @@ pub struct GoogleOAuthConfig {
 
 impl Default for GoogleOAuthConfig {
     fn default() -> Self {
+        // Try env vars first, then fall back to ~/.secrets file
+        let (client_id, client_secret) = Self::load_credentials();
         Self {
-            // These would be replaced with actual values in production
-            // For development, use a placeholder that must be configured
-            client_id: std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_ID")
-                .unwrap_or_else(|_| "YOUR_CLIENT_ID".to_string()),
-            client_secret: std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_SECRET")
-                .unwrap_or_else(|_| "YOUR_CLIENT_SECRET".to_string()),
+            client_id,
+            client_secret,
             redirect_uri: "http://localhost:8085/oauth/callback".to_string(),
         }
+    }
+}
+
+impl GoogleOAuthConfig {
+    /// Load OAuth credentials from env vars or ~/.secrets file
+    fn load_credentials() -> (String, String) {
+        // Try env vars first (both naming conventions)
+        let client_id = std::env::var("GROUNDEFFECT_CLIENT_ID")
+            .or_else(|_| std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_ID"))
+            .ok();
+        let client_secret = std::env::var("GROUNDEFFECT_CLIENT_SECRET")
+            .or_else(|_| std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_SECRET"))
+            .ok();
+
+        if let (Some(id), Some(secret)) = (client_id, client_secret) {
+            return (id, secret);
+        }
+
+        // Fall back to ~/.secrets file
+        if let Some(home) = dirs::home_dir() {
+            let secrets_path = home.join(".secrets");
+            if let Ok(contents) = std::fs::read_to_string(&secrets_path) {
+                let parsed = Self::parse_secrets_file(&contents);
+                if let (Some(id), Some(secret)) = (parsed.0, parsed.1) {
+                    return (id, secret);
+                }
+            }
+        }
+
+        // Return placeholders if nothing found
+        ("YOUR_CLIENT_ID".to_string(), "YOUR_CLIENT_SECRET".to_string())
+    }
+
+    /// Parse shell-style exports from secrets file
+    fn parse_secrets_file(contents: &str) -> (Option<String>, Option<String>) {
+        let mut client_id = None;
+        let mut client_secret = None;
+
+        for line in contents.lines() {
+            let line = line.trim();
+            // Parse: export VAR_NAME="value" or export VAR_NAME='value'
+            if let Some(rest) = line.strip_prefix("export ") {
+                if let Some((key, value)) = rest.split_once('=') {
+                    let key = key.trim();
+                    let value = value.trim().trim_matches('"').trim_matches('\'');
+
+                    match key {
+                        "GROUNDEFFECT_CLIENT_ID" | "GROUNDEFFECT_GOOGLE_CLIENT_ID" => {
+                            client_id = Some(value.to_string());
+                        }
+                        "GROUNDEFFECT_CLIENT_SECRET" | "GROUNDEFFECT_GOOGLE_CLIENT_SECRET" => {
+                            client_secret = Some(value.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        (client_id, client_secret)
     }
 }
 

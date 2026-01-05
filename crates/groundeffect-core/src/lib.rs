@@ -21,8 +21,5 @@ pub use models::*;
 /// Vector dimension for embeddings (384 for all-MiniLM-L6-v2)
 pub const EMBEDDING_DIMENSION: usize = 384;
 
-/// Application name for Keychain and config paths
+/// Application name for config paths
 pub const APP_NAME: &str = "groundeffect";
-
-/// Keychain service name prefix
-pub const KEYCHAIN_SERVICE: &str = "com.groundeffect.oauth";
