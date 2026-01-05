@@ -11,6 +11,7 @@ GroundEffect is a local headless IMAP/CalDav client and MCP Server for Claude Co
 - **Multi-Account**: Connect unlimited Gmail/GCal accounts with independent sync
 - **MCP Integration**: Exposes email and calendar tools directly to Claude Code
 - **Real-time Sync**: IMAP IDLE for instant email notifications, CalDAV polling for calendar
+- **HTML Text Extraction**: Automatically converts HTML emails to clean plain text using `html2text`, preserving readability while stripping markup
 
 ## Prerequisites
 
@@ -235,7 +236,7 @@ Fetch single email by ID with full content.
 |-----------|------|-------------|
 | `id` | string | Email ID - **required** |
 
-Returns full email with attachments list. Body is truncated with `truncated: true` if it exceeds 75K chars.
+Returns full email with attachments list. Body is truncated with `truncated: true` if it exceeds 40K chars (see [Limitations](#limitations)).
 
 #### `get_thread`
 
@@ -490,6 +491,19 @@ To enable MCP server logging, add the env var to your `~/.claude.json`:
 └── cache/
     └── sync_state/        # Per-account sync state
 ```
+
+## Limitations
+
+### Email Body Size
+
+Email bodies are limited to **40,000 characters** (~10 pages of text) when returned via MCP tools. This limit exists because Claude Code's MCP protocol has a token limit for tool results. Emails exceeding this limit are automatically truncated, with `truncated: true` and `total_body_chars` included in the response.
+
+Most emails are well under this limit. Emails that may be truncated include:
+- Marketing newsletters with extensive product listings
+- Long email threads (use `get_thread` to fetch individual messages)
+- Emails with large embedded content
+
+HTML emails are automatically converted to plain text before this limit is applied, which typically reduces size significantly.
 
 ## Troubleshooting
 

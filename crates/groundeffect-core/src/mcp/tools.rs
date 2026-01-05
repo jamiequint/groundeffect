@@ -1026,8 +1026,8 @@ Content-Type: text/html; charset=utf-8
         }))
     }
 
-    /// Maximum body size in chars (~75K to stay under Claude Code MCP limits)
-    const MAX_BODY_CHARS: usize = 75_000;
+    /// Maximum body size in chars (~40K chars ≈ 20K tokens with JSON overhead, staying under Claude Code's 25K token limit)
+    const MAX_BODY_CHARS: usize = 40_000;
 
     /// Get a single email
     async fn get_email(&self, args: &Value) -> Result<Value> {
