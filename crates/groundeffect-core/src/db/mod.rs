@@ -96,12 +96,30 @@ impl Database {
                 .execute()
                 .await?;
 
+            // Create scalar index on id for fast lookups
+            table
+                .create_index(&["id"], Index::BTree(Default::default()))
+                .execute()
+                .await?;
+
             // Note: Vector index will be created lazily once we have data
             // LanceDB requires data to train the IVF index
 
             *self.emails.write() = Some(table);
         } else {
             let table = self.connection.open_table(EMAILS_TABLE).execute().await?;
+
+            // Ensure scalar index exists on id (may not exist for older databases)
+            // LanceDB silently ignores if index already exists
+            if let Err(e) = table
+                .create_index(&["id"], Index::BTree(Default::default()))
+                .execute()
+                .await
+            {
+                // Index may already exist, which is fine
+                debug!("Note: emails.id index creation returned: {}", e);
+            }
+
             *self.emails.write() = Some(table);
         }
 
@@ -127,11 +145,27 @@ impl Database {
                 .execute()
                 .await?;
 
+            // Create scalar index on id for fast lookups
+            table
+                .create_index(&["id"], Index::BTree(Default::default()))
+                .execute()
+                .await?;
+
             // Note: Vector index will be created lazily once we have data
 
             *self.events.write() = Some(table);
         } else {
             let table = self.connection.open_table(EVENTS_TABLE).execute().await?;
+
+            // Ensure scalar index exists on id (may not exist for older databases)
+            if let Err(e) = table
+                .create_index(&["id"], Index::BTree(Default::default()))
+                .execute()
+                .await
+            {
+                debug!("Note: events.id index creation returned: {}", e);
+            }
+
             *self.events.write() = Some(table);
         }
 
@@ -149,7 +183,57 @@ impl Database {
             *self.accounts.write() = Some(table);
         } else {
             let table = self.connection.open_table(ACCOUNTS_TABLE).execute().await?;
-            *self.accounts.write() = Some(table);
+
+            // Check if schema migration is needed
+            let expected_schema = account_schema();
+            let table_schema = table.schema().await?;
+
+            // Compare field count - if table has fewer fields, we need to migrate
+            if table_schema.fields.len() < expected_schema.fields.len() {
+                info!("Accounts table schema is outdated ({} fields vs {} expected), migrating...",
+                      table_schema.fields.len(), expected_schema.fields.len());
+
+                // Read all existing accounts
+                let results = table.query().execute().await?;
+                let batches: Vec<RecordBatch> = results.try_collect().await?;
+                let mut accounts = Vec::new();
+                for batch in &batches {
+                    for i in 0..batch.num_rows() {
+                        // Use a lenient parser that handles missing columns
+                        if let Ok(account) = batch_to_account_lenient(batch, i) {
+                            accounts.push(account);
+                        }
+                    }
+                }
+                info!("Read {} accounts for migration", accounts.len());
+
+                // Drop the old table
+                self.connection.drop_table(ACCOUNTS_TABLE, &[]).await?;
+
+                // Create new table with correct schema
+                let schema = account_schema();
+                let batch = empty_account_batch(&schema);
+                let batches_iter = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(schema.clone()));
+                let new_table = self
+                    .connection
+                    .create_table(ACCOUNTS_TABLE, Box::new(batches_iter))
+                    .execute()
+                    .await?;
+
+                // Re-insert accounts with new schema
+                if !accounts.is_empty() {
+                    for account in &accounts {
+                        let batch = account_to_batch(account)?;
+                        let batches_iter = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(account_schema()));
+                        new_table.add(Box::new(batches_iter)).execute().await?;
+                    }
+                    info!("Migrated {} accounts to new schema", accounts.len());
+                }
+
+                *self.accounts.write() = Some(new_table);
+            } else {
+                *self.accounts.write() = Some(table);
+            }
         }
 
         info!("Database tables initialized");
@@ -282,6 +366,11 @@ impl Database {
     /// Insert or update an account
     pub async fn upsert_account(&self, account: &Account) -> Result<()> {
         let table = self.accounts_table()?;
+
+        // Read existing account data as backup before deletion
+        let existing = self.get_account(&account.id).await?;
+
+        // Prepare the new batch
         let batch = account_to_batch(account)?;
         let batches = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(account_schema()));
 
@@ -291,11 +380,28 @@ impl Database {
             .await
             .ok();
 
-        // Insert new
-        table
+        // Try to insert new data
+        let result = table
             .add(Box::new(batches))
             .execute()
-            .await?;
+            .await;
+
+        // If insert fails, try to restore the old data
+        if let Err(e) = result {
+            tracing::error!("Failed to insert account {}: {}", account.id, e);
+            if let Some(old_account) = existing {
+                tracing::warn!("Attempting to restore previous account data for {}", account.id);
+                // Try to restore the old account data
+                let restore_batch = account_to_batch(&old_account)?;
+                let restore_batches = RecordBatchIterator::new(vec![Ok(restore_batch)], Arc::new(account_schema()));
+                if let Err(restore_err) = table.add(Box::new(restore_batches)).execute().await {
+                    tracing::error!("Failed to restore account {}: {} - DATA LOSS OCCURRED", account.id, restore_err);
+                } else {
+                    tracing::info!("Successfully restored previous account data for {}", account.id);
+                }
+            }
+            return Err(Error::Database(e));
+        }
 
         debug!("Upserted account {}", account.id);
         Ok(())
@@ -318,6 +424,36 @@ impl Database {
 
         let email = batch_to_email(&batches[0], 0)?;
         Ok(Some(email))
+    }
+
+    /// Get multiple emails by ID in a single query (batch fetch)
+    pub async fn get_emails_batch(&self, ids: &[String]) -> Result<Vec<Email>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let table = self.emails_table()?;
+
+        // Build IN clause: id IN ('id1', 'id2', ...)
+        let id_list: Vec<String> = ids.iter().map(|id| format!("'{}'", id)).collect();
+        let filter = format!("id IN ({})", id_list.join(", "));
+
+        let results = table
+            .query()
+            .only_if(&filter)
+            .execute()
+            .await?;
+
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut emails = Vec::with_capacity(ids.len());
+        for batch in &batches {
+            for i in 0..batch.num_rows() {
+                emails.push(batch_to_email(batch, i)?);
+            }
+        }
+
+        Ok(emails)
     }
 
     /// Get an account by ID (email address)
@@ -358,6 +494,36 @@ impl Database {
         Ok(Some(event))
     }
 
+    /// Get multiple events by ID in a single query (batch fetch)
+    pub async fn get_events_batch(&self, ids: &[String]) -> Result<Vec<CalendarEvent>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let table = self.events_table()?;
+
+        // Build IN clause: id IN ('id1', 'id2', ...)
+        let id_list: Vec<String> = ids.iter().map(|id| format!("'{}'", id)).collect();
+        let filter = format!("id IN ({})", id_list.join(", "));
+
+        let results = table
+            .query()
+            .only_if(&filter)
+            .execute()
+            .await?;
+
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut events = Vec::with_capacity(ids.len());
+        for batch in &batches {
+            for i in 0..batch.num_rows() {
+                events.push(batch_to_event(batch, i)?);
+            }
+        }
+
+        Ok(events)
+    }
+
     /// List all accounts
     pub async fn list_accounts(&self) -> Result<Vec<Account>> {
         let table = self.accounts_table()?;
@@ -380,24 +546,31 @@ impl Database {
 
     /// Clear all synced data for an account (keeps the account, clears emails/events)
     pub async fn clear_account_sync_data(&self, account_id: &str) -> Result<(u64, u64)> {
-        // Count before deleting
-        let email_count = self.count_emails(Some(account_id)).await?;
-        let event_count = self.count_events(Some(account_id)).await?;
+        let email_count = self.clear_account_emails(account_id).await?;
+        let event_count = self.clear_account_events(account_id).await?;
+        Ok((email_count, event_count))
+    }
 
-        // Delete emails
+    /// Clear only emails for an account
+    pub async fn clear_account_emails(&self, account_id: &str) -> Result<u64> {
+        let email_count = self.count_emails(Some(account_id)).await?;
         let emails_table = self.emails_table()?;
         emails_table
             .delete(&format!("account_id = '{}'", account_id))
             .await?;
+        info!("Cleared {} emails for account {}", email_count, account_id);
+        Ok(email_count)
+    }
 
-        // Delete events
+    /// Clear only calendar events for an account
+    pub async fn clear_account_events(&self, account_id: &str) -> Result<u64> {
+        let event_count = self.count_events(Some(account_id)).await?;
         let events_table = self.events_table()?;
         events_table
             .delete(&format!("account_id = '{}'", account_id))
             .await?;
-
-        info!("Cleared {} emails and {} events for account {}", email_count, event_count, account_id);
-        Ok((email_count, event_count))
+        info!("Cleared {} events for account {}", event_count, account_id);
+        Ok(event_count)
     }
 
     /// Delete an account and all its data
@@ -543,6 +716,55 @@ impl Database {
                             None => ts,
                         });
                     }
+                }
+            }
+        }
+
+        Ok((oldest, newest))
+    }
+
+    /// Get event sync boundaries for resume (oldest and newest dates)
+    pub async fn get_event_sync_boundaries(&self, account_id: &str) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
+        let table = self.events_table()?;
+
+        let query = table
+            .query()
+            .select(lancedb::query::Select::columns(&["start"]))
+            .only_if(&format!("account_id = '{}'", account_id));
+
+        let results = query.execute().await?;
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut oldest: Option<DateTime<Utc>> = None;
+        let mut newest: Option<DateTime<Utc>> = None;
+
+        for batch in &batches {
+            if let Some(start_col) = batch.column_by_name("start")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            {
+                for i in 0..batch.num_rows() {
+                    let start_str = start_col.value(i);
+                    // Parse as RFC3339 datetime or date-only
+                    let dt = if let Ok(parsed) = DateTime::parse_from_rfc3339(start_str) {
+                        parsed.with_timezone(&Utc)
+                    } else if let Ok(date) = chrono::NaiveDate::parse_from_str(start_str, "%Y-%m-%d") {
+                        date.and_hms_opt(0, 0, 0)
+                            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                            .unwrap_or_else(Utc::now)
+                    } else {
+                        continue;
+                    };
+
+                    oldest = Some(match oldest {
+                        Some(current) if dt < current => dt,
+                        Some(current) => current,
+                        None => dt,
+                    });
+                    newest = Some(match newest {
+                        Some(current) if dt > current => dt,
+                        Some(current) => current,
+                        None => dt,
+                    });
                 }
             }
         }

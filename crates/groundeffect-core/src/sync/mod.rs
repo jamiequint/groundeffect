@@ -240,35 +240,50 @@ impl SyncManager {
         let (oldest_synced, _newest_synced) = self.db.get_email_sync_boundaries(account_id).await?;
         let existing_count = self.db.count_emails(Some(account_id)).await?;
 
-        // Determine if we need to resume and from where
-        let (resume_mode, sync_since) = match oldest_synced {
-            Some(oldest) if oldest <= target_since => {
-                // We've already synced back to the target - just need incremental
-                info!("Account {} already synced to target date, skipping to calendar", account_id);
-                (false, oldest) // No email sync needed
-            }
-            Some(oldest) => {
-                // Resume from where we left off (with 1 day buffer for safety)
-                let resume_from = oldest - Duration::days(1);
-                info!(
-                    "Resuming sync for {} from {} (had {} emails, syncing back to {})",
-                    account_id,
-                    resume_from.format("%Y-%m-%d"),
-                    existing_count,
-                    target_since.format("%Y-%m-%d")
-                );
-                (true, resume_from)
-            }
-            None => {
-                // Fresh sync - start from now
-                info!("Fresh sync for {} back to {}", account_id, target_since.format("%Y-%m-%d"));
-                (false, Utc::now())
-            }
+        // Determine sync strategy:
+        // 1. If backfill complete (oldest_synced date <= target_since date): incremental from last_sync_email
+        // 2. If backfill incomplete: continue from target_since (with deduplication)
+        // 3. Fresh sync: start from now, work back to target_since
+        // Compare dates only (not timestamps) to handle emails that arrived after midnight on target day
+        let backfill_complete = oldest_synced
+            .map(|o| o.date_naive() <= target_since.date_naive())
+            .unwrap_or(false);
+
+        let (resume_mode, fetch_since) = if backfill_complete {
+            // Backfill complete - only need incremental sync for new emails
+            let incremental_since = account.last_sync_email
+                .map(|t| t - Duration::hours(1)) // 1 hour buffer for safety
+                .unwrap_or(target_since);
+            info!(
+                "Incremental sync for {} from {} (backfill complete, {} emails)",
+                account_id,
+                incremental_since.format("%Y-%m-%d %H:%M"),
+                existing_count
+            );
+            (false, incremental_since)
+        } else if let Some(oldest) = oldest_synced {
+            // Backfill incomplete - continue from target_since with deduplication
+            info!(
+                "Continuing backfill for {} from {} to {} (had {} emails)",
+                account_id,
+                target_since.format("%Y-%m-%d"),
+                oldest.format("%Y-%m-%d"),
+                existing_count
+            );
+            (true, target_since)
+        } else {
+            // Fresh sync - start from now
+            info!("Fresh sync for {} back to {}", account_id, target_since.format("%Y-%m-%d"));
+            (false, Utc::now())
         };
 
-        // Skip email sync if already complete
-        if oldest_synced.is_some() && oldest_synced.unwrap() <= target_since {
-            info!("Email sync already complete for {}, proceeding to calendar", account_id);
+        // Skip email sync if very recent (within last 5 minutes) and backfill complete
+        let skip_email_sync = backfill_complete && account.last_sync_email
+            .map(|t| Utc::now() - t < Duration::minutes(5))
+            .unwrap_or(false);
+
+        if skip_email_sync {
+            info!("Email sync recently completed for {}, proceeding to calendar", account_id);
         } else {
             // Load existing message_ids for deduplication
             let existing_message_ids = std::sync::Arc::new(
@@ -283,37 +298,40 @@ impl SyncManager {
             ).await?;
 
             // Phase 0: Count emails to get progress estimate
+            // For incremental sync (backfill_complete), we don't need total INBOX count
+            let total_emails = if backfill_complete {
+                // Incremental sync - total is just existing + any new we find
+                existing_count
+            } else {
+                // Backfill sync - count total in INBOX for progress
+                let count = imap_client.count_emails().await.unwrap_or(0);
+                info!("Account {} has approximately {} emails in INBOX", account_id, count);
+                count
+            };
+
             {
                 let mut states = self.account_states.write();
                 if let Some(state) = states.get_mut(account_id) {
+                    let phase = if backfill_complete {
+                        SyncPhase::RecentEmails
+                    } else if resume_mode {
+                        SyncPhase::Backfill
+                    } else {
+                        SyncPhase::Counting
+                    };
                     state.initial_sync_progress = Some(InitialSyncProgress {
-                        total_emails_estimated: 0,
+                        total_emails_estimated: total_emails,
                         emails_synced: existing_count,
                         total_events_estimated: 0,
                         events_synced: 0,
                         started_at: Utc::now(),
-                        phase: if resume_mode { SyncPhase::Backfill } else { SyncPhase::Counting },
+                        phase,
                         emails_per_second: 0.0,
                     });
                 }
             }
 
-            // Count total emails in INBOX (for progress estimation)
-            let total_emails = imap_client.count_emails().await.unwrap_or(0);
-            info!("Account {} has approximately {} emails in INBOX", account_id, total_emails);
-
-            // Update progress with count
-            {
-                let mut states = self.account_states.write();
-                if let Some(state) = states.get_mut(account_id) {
-                    if let Some(ref mut progress) = state.initial_sync_progress {
-                        progress.total_emails_estimated = total_emails;
-                        progress.phase = SyncPhase::RecentEmails;
-                    }
-                }
-            }
-
-            // Phase 1: Sync emails (either fresh or resuming)
+            // Phase 1: Sync emails (either fresh, resuming, or incremental)
             self.emit_event(SyncEvent::SyncStarted {
                 account_id: account_id.to_string(),
                 sync_type: SyncType::Email,
@@ -332,11 +350,10 @@ impl SyncManager {
             let db_clone = self.db.clone();
             let embedding_clone = self.embedding.clone();
             let existing_ids_clone = existing_message_ids.clone();
-            let target_since_clone = target_since;
             let progress_file_path = self.config.sync_progress_file();
 
-            // Use single connection to fetch all emails since target date
-            let result = imap_client.fetch_all_emails_since(target_since, batch_size, |emails| {
+            // Use single connection to fetch emails (incremental or backfill depending on fetch_since)
+            let result = imap_client.fetch_all_emails_since(fetch_since, batch_size, |emails| {
                 let total_synced = total_synced_clone.clone();
                 let total_new = total_new_clone.clone();
                 let account_states = account_states_clone.clone();
@@ -642,9 +659,14 @@ impl SyncManager {
             state.event_count = total_event_count;
         }
 
-        // Persist last_sync_calendar to database
+        // Persist last_sync_calendar and oldest_event_synced to database
         if let Ok(Some(mut account)) = self.db.get_account(account_id).await {
             account.last_sync_calendar = Some(now);
+            // Update oldest_event_synced to track sync progress
+            let (oldest_event, _) = self.db.get_event_sync_boundaries(account_id).await.unwrap_or((None, None));
+            if oldest_event.is_some() {
+                account.oldest_event_synced = oldest_event;
+            }
             if let Err(e) = self.db.upsert_account(&account).await {
                 warn!("Failed to persist last_sync_calendar: {}", e);
             }

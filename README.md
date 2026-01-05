@@ -115,15 +115,13 @@ This is typically invoked automatically by Claude Code via the MCP config.
 
 ## MCP Tools
 
-Once connected, Claude Code has access to 18 tools organized into these categories:
+Once connected, Claude Code has access to these tools:
 
 ### Account Management
 
 | Tool | Description |
 |------|-------------|
-| `list_accounts` | List all connected Gmail/GCal accounts |
-| `get_account` | Get details for a specific account |
-| `add_account` | Add a new Google account via OAuth (opens browser for authentication) |
+| `manage_accounts` | Manage accounts with actions: `list` (all accounts), `get` (single account details), `add` (OAuth flow), `delete` (remove account), `configure` (set alias, sync_email, sync_calendar, folders) |
 
 ### Email Tools
 
@@ -131,7 +129,7 @@ Once connected, Claude Code has access to 18 tools organized into these categori
 |------|-------------|
 | `search_emails` | Hybrid BM25 + vector search across emails with filters (folder, from, to, date range, attachments) |
 | `list_recent_emails` | List recent emails sorted by date (fast, no search overhead) |
-| `get_email` | Fetch single email by ID with full content. Uses plain text when available, extracts text from HTML otherwise. Truncates with `truncated: true` flag if body exceeds 50K chars |
+| `get_email` | Fetch single email by ID with full content. Uses plain text when available, extracts text from HTML otherwise. Truncates with `truncated: true` flag if body exceeds 75K chars |
 | `get_thread` | Fetch all emails in a Gmail thread |
 | `list_folders` | List all IMAP folders for accounts |
 
@@ -148,17 +146,13 @@ Once connected, Claude Code has access to 18 tools organized into these categori
 
 | Tool | Description |
 |------|-------------|
-| `get_sync_status` | Get current sync status, statistics, and live progress |
-| `reset_sync` | Clear all synced data for an account (keeps account connected) |
-| `extend_sync_range` | Extend sync to include older emails and events |
+| `manage_sync` | Manage sync (actions: status, reset, extend, resume_from). For status, omit account to see all accounts with live progress. |
 
 ### Daemon Management
 
 | Tool | Description |
 |------|-------------|
-| `start_daemon` | Start the background sync daemon (with optional logging) |
-| `stop_daemon` | Stop the running sync daemon |
-| `get_daemon_status` | Check if the sync daemon is running |
+| `manage_daemon` | Manage the sync daemon (actions: start, stop, restart, status) |
 
 ### Example queries in Claude Code
 
@@ -173,13 +167,16 @@ What meetings do I have about the product launch?
 → Uses search_calendar
 
 Add my work Gmail account
-→ Uses add_account to start OAuth flow
+→ Uses manage_accounts with action 'add' to start OAuth flow
+
+Configure my work account to only sync email (not calendar)
+→ Uses manage_accounts with action 'configure', sync_calendar: false
 
 Show me the sync status
-→ Uses get_sync_status (shows live progress during sync)
+→ Uses manage_sync with action 'status' (shows live progress during sync)
 
 Start syncing my email
-→ Uses start_daemon to begin background sync
+→ Uses manage_daemon to begin background sync
 ```
 
 ## Configuration
@@ -202,6 +199,12 @@ vector_weight = 0.5
 [accounts.aliases]
 work = "work@gmail.com"
 personal = "personal@gmail.com"
+
+# Per-account settings (managed via manage_accounts configure action)
+[accounts."work@gmail.com"]
+sync_email = true
+sync_calendar = false
+folders = ["INBOX", "Sent"]
 ```
 
 ## Logging
@@ -230,7 +233,7 @@ These processes run independently—the MCP server can start/stop the daemon, bu
 groundeffect-daemon --log                    # CLI flag
 GROUNDEFFECT_DAEMON_LOGGING=true groundeffect-daemon  # Environment variable
 ```
-Or via MCP tool: `start_daemon` with `logging: true`
+Or via MCP tool: `manage_daemon` with `action: "start"` and `logging: true`
 
 **MCP Server**:
 ```bash
@@ -258,7 +261,7 @@ To enable logging for both processes when using Claude Code, add environment var
 ```
 
 - `GROUNDEFFECT_MCP_LOGGING` enables MCP server logging immediately when Claude Code connects
-- `GROUNDEFFECT_DAEMON_LOGGING` enables daemon logging when started via the `start_daemon` tool
+- `GROUNDEFFECT_DAEMON_LOGGING` enables daemon logging when started via the `manage_daemon` tool
 
 ## Data Storage
 

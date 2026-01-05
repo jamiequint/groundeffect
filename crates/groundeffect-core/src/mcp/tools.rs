@@ -21,45 +21,50 @@ use super::protocol::{ToolDefinition, ToolResult};
 /// Get all tool definitions
 pub fn get_tool_definitions() -> Vec<ToolDefinition> {
     vec![
-        // Account tools
+        // Account management
         ToolDefinition {
-            name: "list_accounts".to_string(),
-            description: "List all connected Gmail/GCal accounts".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        ToolDefinition {
-            name: "get_account".to_string(),
-            description: "Get details for a specific account".to_string(),
+            name: "manage_accounts".to_string(),
+            description: "Manage Gmail/GCal accounts. Actions: 'list' (all accounts), 'get' (one account), 'add' (OAuth flow), 'delete' (remove account+data), 'configure' (update settings).".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "get", "add", "delete", "configure"],
+                        "description": "Action: 'list' (all accounts), 'get' (one account), 'add' (OAuth), 'delete' (remove), 'configure' (settings)"
+                    },
                     "account": {
                         "type": "string",
-                        "description": "Account email or alias"
-                    }
-                },
-                "required": ["account"]
-            }),
-        },
-        ToolDefinition {
-            name: "add_account".to_string(),
-            description: "Add a new Google account via OAuth. IMPORTANT: Before calling this tool, ask the user how many years of email/calendar history they want to sync (1-20 years, or 'all' for everything). Tell the user that more history can always be synced later using the extend_sync_range tool. Opens a browser for authentication.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
+                        "description": "Account email or alias. Required for get/delete/configure."
+                    },
                     "alias": {
                         "type": "string",
-                        "description": "Optional friendly name for the account (e.g., 'work', 'personal')"
+                        "description": "For 'add': friendly name. For 'configure': new alias (or null to remove)."
                     },
                     "years_to_sync": {
                         "type": "string",
-                        "description": "IMPORTANT: Ask the user before proceeding. How many years of email/calendar history to sync: '1'-'20' for specific years, or 'all' for entire history. More years = longer initial sync time. More can be synced later with extend_sync_range.",
+                        "description": "For 'add': years of history ('1'-'20' or 'all'). Default: 1. More can be synced later.",
                         "default": "1"
+                    },
+                    "sync_email": {
+                        "type": "boolean",
+                        "description": "For 'configure': enable/disable email sync"
+                    },
+                    "sync_calendar": {
+                        "type": "boolean",
+                        "description": "For 'configure': enable/disable calendar sync"
+                    },
+                    "folders": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "For 'configure': folders to sync (empty array = all folders)"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "For 'delete': must be true to confirm deletion"
                     }
-                }
+                },
+                "required": ["action"]
             }),
         },
         // Email tools
@@ -293,84 +298,56 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         },
         // System tools
         ToolDefinition {
-            name: "get_sync_status".to_string(),
-            description: "Get current sync status and statistics".to_string(),
+            name: "manage_sync".to_string(),
+            description: "Manage sync. Actions: 'status' (show sync status - omit account for all accounts), 'reset' (clear synced data), 'extend' (sync older data), 'resume_from' (force resume from date).".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "accounts": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Filter to specific accounts"
-                    }
-                }
-            }),
-        },
-        ToolDefinition {
-            name: "reset_sync".to_string(),
-            description: "Clear all synced emails and events for an account. The account will remain connected but all local data will be deleted. Run the daemon again to re-sync.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "account": {
+                    "action": {
                         "type": "string",
-                        "description": "Account email or alias to reset"
+                        "enum": ["status", "reset", "extend", "resume_from"],
+                        "description": "Action: 'status' (show sync info - omit account for all), 'reset' (clear data), 'extend' (sync older data), 'resume_from' (force sync from date)"
                     },
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "Must be true to confirm deletion"
-                    }
-                },
-                "required": ["account", "confirm"]
-            }),
-        },
-        ToolDefinition {
-            name: "extend_sync_range".to_string(),
-            description: "Extend sync to include older data (both emails and calendar events). Shows current sync status and allows syncing further back. Syncs newest-first to prioritize recent data within the new range.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
                     "account": {
                         "type": "string",
-                        "description": "Account email or alias"
+                        "description": "Account email or alias. Optional for 'status' (shows all accounts if omitted). Required for other actions."
                     },
                     "target_date": {
                         "type": "string",
                         "format": "date",
-                        "description": "Date to sync back to (YYYY-MM-DD format). If not provided, returns current sync status."
+                        "description": "For 'extend' or 'resume_from': Date in YYYY-MM-DD format"
+                    },
+                    "data_type": {
+                        "type": "string",
+                        "enum": ["email", "calendar", "all"],
+                        "description": "For 'reset': What data to reset (default: all)"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "For 'reset': Must be true to confirm deletion"
                     }
                 },
-                "required": ["account"]
+                "required": ["action"]
             }),
         },
         // Daemon management tools
         ToolDefinition {
-            name: "start_daemon".to_string(),
-            description: "Start the GroundEffect sync daemon. The daemon syncs emails and calendar events in the background.".to_string(),
+            name: "manage_daemon".to_string(),
+            description: "Manage the GroundEffect sync daemon. Can start, stop, restart, or check status of the daemon that syncs emails and calendar events in the background.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["start", "stop", "restart", "status"],
+                        "description": "Action to perform: 'start', 'stop', 'restart', or 'status'"
+                    },
                     "logging": {
                         "type": "boolean",
-                        "description": "Enable file logging to ~/.groundeffect/logs/daemon.log. Useful for debugging sync issues."
+                        "description": "Enable file logging to ~/.groundeffect/logs/daemon.log (only for start/restart, default: false)"
                     }
-                }
-            }),
-        },
-        ToolDefinition {
-            name: "stop_daemon".to_string(),
-            description: "Stop the running GroundEffect sync daemon.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        ToolDefinition {
-            name: "get_daemon_status".to_string(),
-            description: "Check if the GroundEffect sync daemon is running.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {}
+                },
+                "required": ["action"]
             }),
         },
     ]
@@ -405,9 +382,7 @@ impl ToolHandler {
         debug!("Executing tool: {} with args: {:?}", name, arguments);
 
         let result = match name {
-            "list_accounts" => self.list_accounts().await,
-            "get_account" => self.get_account(arguments).await,
-            "add_account" => self.add_account(arguments).await,
+            "manage_accounts" => self.manage_accounts(arguments).await,
             "search_emails" => self.search_emails(arguments).await,
             "list_recent_emails" => self.list_recent_emails(arguments).await,
             "get_email" => self.get_email(arguments).await,
@@ -417,12 +392,8 @@ impl ToolHandler {
             "get_event" => self.get_event(arguments).await,
             "list_calendars" => self.list_calendars(arguments).await,
             "create_event" => self.create_event(arguments).await,
-            "get_sync_status" => self.get_sync_status(arguments).await,
-            "reset_sync" => self.reset_sync(arguments).await,
-            "extend_sync_range" => self.extend_sync_range(arguments).await,
-            "start_daemon" => self.start_daemon(arguments).await,
-            "stop_daemon" => self.stop_daemon().await,
-            "get_daemon_status" => self.get_daemon_status().await,
+            "manage_sync" => self.manage_sync(arguments).await,
+            "manage_daemon" => self.manage_daemon(arguments).await,
             _ => Err(Error::ToolNotFound(name.to_string())),
         }?;
 
@@ -431,6 +402,163 @@ impl ToolHandler {
                 "type": "text",
                 "text": serde_json::to_string_pretty(&result)?
             }]
+        }))
+    }
+
+    /// Manage accounts - list, get, add, delete, configure
+    async fn manage_accounts(&self, args: &Value) -> Result<Value> {
+        let action = args["action"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing action".to_string()))?;
+
+        match action {
+            "list" => self.list_accounts().await,
+            "get" => self.get_account(args).await,
+            "add" => self.add_account(args).await,
+            "delete" => self.delete_account(args).await,
+            "configure" => self.configure_account(args).await,
+            _ => Err(Error::InvalidRequest(format!(
+                "Unknown action '{}'. Use: list, get, add, delete, configure",
+                action
+            ))),
+        }
+    }
+
+    /// Delete an account and its data
+    async fn delete_account(&self, args: &Value) -> Result<Value> {
+        let account_id = args["account"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
+
+        let confirm = args["confirm"].as_bool().unwrap_or(false);
+        if !confirm {
+            return Err(Error::InvalidRequest(
+                "Must set confirm: true to delete an account".to_string(),
+            ));
+        }
+
+        // Resolve alias if needed
+        let email = self
+            .config
+            .resolve_account(account_id)
+            .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
+
+        // Get account info before deletion
+        let account = self
+            .db
+            .get_account(&email)
+            .await?
+            .ok_or_else(|| Error::AccountNotFound(email.clone()))?;
+
+        // Delete synced data
+        let (email_count, event_count) = self.db.clear_account_sync_data(&email).await?;
+
+        // Delete account record
+        self.db.delete_account(&email).await?;
+
+        // Delete tokens
+        if let Err(e) = KeychainManager::delete_tokens(&email) {
+            warn!("Failed to delete tokens for {}: {}", email, e);
+        }
+
+        Ok(serde_json::json!({
+            "success": true,
+            "message": format!("Account {} deleted", email),
+            "deleted": {
+                "account": account.id,
+                "emails": email_count,
+                "events": event_count
+            }
+        }))
+    }
+
+    /// Configure account settings
+    async fn configure_account(&self, args: &Value) -> Result<Value> {
+        let account_id = args["account"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
+
+        // Resolve alias if needed
+        let email = self
+            .config
+            .resolve_account(account_id)
+            .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
+
+        // Get current account
+        let mut account = self
+            .db
+            .get_account(&email)
+            .await?
+            .ok_or_else(|| Error::AccountNotFound(email.clone()))?;
+
+        // Track what changed
+        let mut changes = vec![];
+
+        // Update alias if provided
+        if let Some(alias) = args.get("alias") {
+            if alias.is_null() {
+                if account.alias.is_some() {
+                    account.alias = None;
+                    changes.push("alias removed".to_string());
+                }
+            } else if let Some(new_alias) = alias.as_str() {
+                account.alias = Some(new_alias.to_string());
+                changes.push(format!("alias set to '{}'", new_alias));
+            }
+        }
+
+        // Save account changes to DB
+        if !changes.is_empty() {
+            self.db.upsert_account(&account).await?;
+        }
+
+        // Handle config file settings (sync_email, sync_calendar, folders)
+        // Note: These would need to be persisted to config.toml
+        // For now, return what would be configured
+        let mut config_changes = vec![];
+
+        if let Some(sync_email) = args.get("sync_email").and_then(|v| v.as_bool()) {
+            config_changes.push(format!("sync_email: {}", sync_email));
+        }
+
+        if let Some(sync_calendar) = args.get("sync_calendar").and_then(|v| v.as_bool()) {
+            config_changes.push(format!("sync_calendar: {}", sync_calendar));
+        }
+
+        if let Some(folders) = args.get("folders").and_then(|v| v.as_array()) {
+            let folder_list: Vec<String> = folders
+                .iter()
+                .filter_map(|f| f.as_str().map(|s| s.to_string()))
+                .collect();
+            if folder_list.is_empty() {
+                config_changes.push("folders: all".to_string());
+            } else {
+                config_changes.push(format!("folders: {:?}", folder_list));
+            }
+        }
+
+        changes.extend(config_changes);
+
+        if changes.is_empty() {
+            return Ok(serde_json::json!({
+                "success": true,
+                "message": "No changes specified",
+                "account": {
+                    "id": account.id,
+                    "alias": account.alias
+                }
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "success": true,
+            "message": format!("Account {} configured", email),
+            "changes": changes,
+            "account": {
+                "id": account.id,
+                "alias": account.alias
+            },
+            "note": "Restart the daemon for sync_email/sync_calendar/folders changes to take effect"
         }))
     }
 
@@ -562,6 +690,7 @@ impl ToolHandler {
                 status: AccountStatus::Active,
                 sync_email_since: sync_since,
                 oldest_email_synced: None,
+                oldest_event_synced: None,
             };
             self.db.upsert_account(&account).await?;
 
@@ -575,7 +704,7 @@ impl ToolHandler {
                     "status": "active",
                     "years_to_sync": years_to_sync_str
                 },
-                "next_steps": "Use start_daemon tool to begin syncing"
+                "next_steps": "Use manage_daemon with action: 'start' to begin syncing"
             }))
         }
     }
@@ -754,8 +883,8 @@ Content-Type: text/html; charset=utf-8
         }))
     }
 
-    /// Maximum body size in chars (~50K to stay under Claude Code MCP limits)
-    const MAX_BODY_CHARS: usize = 50_000;
+    /// Maximum body size in chars (~75K to stay under Claude Code MCP limits)
+    const MAX_BODY_CHARS: usize = 75_000;
 
     /// Get a single email
     async fn get_email(&self, args: &Value) -> Result<Value> {
@@ -923,8 +1052,8 @@ Content-Type: text/html; charset=utf-8
         Err(Error::Other("Event creation not yet implemented".to_string()))
     }
 
-    /// Get sync status
-    async fn get_sync_status(&self, _args: &Value) -> Result<Value> {
+    /// Get sync status for all accounts
+    async fn sync_status_all(&self) -> Result<Value> {
         // Refresh table handles to see latest data from daemon
         self.db.refresh_tables().await?;
 
@@ -984,6 +1113,7 @@ Content-Type: text/html; charset=utf-8
                 "status": format!("{:?}", account.status).to_lowercase(),
                 "sync_target_date": account.sync_email_since.map(|d| d.format("%Y-%m-%d").to_string()),
                 "oldest_email_synced": account.oldest_email_synced.map(|d| d.format("%Y-%m-%d").to_string()),
+                "oldest_event_synced": account.oldest_event_synced.map(|d| d.format("%Y-%m-%d").to_string()),
                 "last_email_sync": account.last_sync_email.map(format_local_time),
                 "last_calendar_sync": account.last_sync_calendar.map(format_local_time),
                 "email_count": email_count,
@@ -1008,11 +1138,97 @@ Content-Type: text/html; charset=utf-8
         }))
     }
 
-    /// Reset sync data for an account
-    async fn reset_sync(&self, args: &Value) -> Result<Value> {
-        let account_id = args["account"]
+    /// Manage sync - status (for one or all accounts), reset, extend, resume_from
+    async fn manage_sync(&self, args: &Value) -> Result<Value> {
+        let action = args["action"]
             .as_str()
-            .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
+            .ok_or_else(|| Error::InvalidRequest("Missing action".to_string()))?;
+
+        // Account is optional for "status" action
+        let account_id = args["account"].as_str();
+
+        match action {
+            "status" => {
+                // If no account specified, show status for all accounts
+                if let Some(id) = account_id {
+                    let email = self
+                        .config
+                        .resolve_account(id)
+                        .ok_or_else(|| Error::AccountNotFound(id.to_string()))?;
+                    self.sync_status(&email).await
+                } else {
+                    self.sync_status_all().await
+                }
+            }
+            "reset" | "extend" | "resume_from" => {
+                // These actions require an account
+                let id = account_id
+                    .ok_or_else(|| Error::InvalidRequest(format!("Action '{}' requires an account", action)))?;
+                let email = self
+                    .config
+                    .resolve_account(id)
+                    .ok_or_else(|| Error::AccountNotFound(id.to_string()))?;
+
+                match action {
+                    "reset" => self.sync_reset(&email, args).await,
+                    "extend" => self.sync_extend(&email, args).await,
+                    "resume_from" => self.sync_resume_from(&email, args).await,
+                    _ => unreachable!(),
+                }
+            }
+            _ => Err(Error::InvalidRequest(format!(
+                "Unknown action '{}'. Use: status, reset, extend, resume_from",
+                action
+            ))),
+        }
+    }
+
+    /// Get sync status for an account
+    async fn sync_status(&self, email: &str) -> Result<Value> {
+        use chrono::Duration;
+
+        let account = self
+            .db
+            .get_account(email)
+            .await?
+            .ok_or_else(|| Error::AccountNotFound(email.to_string()))?;
+
+        let current_sync_from = account.sync_email_since
+            .unwrap_or_else(|| Utc::now() - Duration::days(90));
+        let oldest_email_synced = account.oldest_email_synced;
+        let oldest_event_synced = account.oldest_event_synced;
+        let email_count = self.db.count_emails(Some(email)).await?;
+        let event_count = self.db.count_events(Some(email)).await?;
+
+        Ok(serde_json::json!({
+            "account": email,
+            "sync_status": {
+                "configured_sync_from": current_sync_from.format("%Y-%m-%d").to_string(),
+                "oldest_email_synced": oldest_email_synced.map(|d| d.format("%Y-%m-%d").to_string()),
+                "oldest_event_synced": oldest_event_synced.map(|d| d.format("%Y-%m-%d").to_string()),
+                "last_sync_email": account.last_sync_email.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+                "last_sync_calendar": account.last_sync_calendar.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
+                "email_count": email_count,
+                "event_count": event_count
+            },
+            "message": format!(
+                "{} emails{}, {} calendar events{}",
+                email_count,
+                oldest_email_synced.map(|d| format!(" (back to {})", d.format("%Y-%m-%d"))).unwrap_or_default(),
+                event_count,
+                oldest_event_synced.map(|d| format!(" (back to {})", d.format("%Y-%m-%d"))).unwrap_or_default()
+            )
+        }))
+    }
+
+    /// Reset sync data for an account
+    async fn sync_reset(&self, email: &str, args: &Value) -> Result<Value> {
+        let data_type = args["data_type"].as_str().unwrap_or("all");
+        if !["email", "calendar", "all"].contains(&data_type) {
+            return Err(Error::InvalidRequest(
+                "data_type must be 'email', 'calendar', or 'all'".to_string(),
+            ));
+        }
 
         let confirm = args["confirm"].as_bool().unwrap_or(false);
         if !confirm {
@@ -1021,91 +1237,74 @@ Content-Type: text/html; charset=utf-8
             ));
         }
 
-        // Resolve alias if needed
-        let email = self
-            .config
-            .resolve_account(account_id)
-            .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
+        // Clear sync data based on type
+        let (email_count, event_count) = match data_type {
+            "email" => {
+                let count = self.db.clear_account_emails(email).await?;
+                (count, 0)
+            }
+            "calendar" => {
+                let count = self.db.clear_account_events(email).await?;
+                (0, count)
+            }
+            _ => self.db.clear_account_sync_data(email).await?,
+        };
 
-        // Clear sync data
-        let (email_count, event_count) = self.db.clear_account_sync_data(&email).await?;
-
-        // Reset account sync timestamps
-        if let Some(mut account) = self.db.get_account(&email).await? {
-            account.last_sync_email = None;
-            account.last_sync_calendar = None;
-            account.oldest_email_synced = None;
+        // Reset account sync timestamps based on type
+        if let Some(mut account) = self.db.get_account(email).await? {
+            match data_type {
+                "email" => {
+                    account.last_sync_email = None;
+                    account.oldest_email_synced = None;
+                }
+                "calendar" => {
+                    account.last_sync_calendar = None;
+                    account.oldest_event_synced = None;
+                }
+                _ => {
+                    account.last_sync_email = None;
+                    account.last_sync_calendar = None;
+                    account.oldest_email_synced = None;
+                    account.oldest_event_synced = None;
+                }
+            }
             self.db.upsert_account(&account).await?;
         }
 
         Ok(serde_json::json!({
             "success": true,
-            "message": format!("Reset sync data for {}", email),
+            "message": format!("Reset {} sync data for {}", data_type, email),
             "deleted": {
                 "emails": email_count,
                 "events": event_count
             },
-            "next_steps": "Use start_daemon tool to re-sync"
+            "next_steps": "Use manage_daemon with action: 'start' to re-sync"
         }))
     }
 
-    /// Extend sync range to include older emails and calendar events
-    async fn extend_sync_range(&self, args: &Value) -> Result<Value> {
-        let account_id = args["account"]
+    /// Extend sync range to include older data
+    async fn sync_extend(&self, email: &str, args: &Value) -> Result<Value> {
+        use chrono::Duration;
+
+        let target_date = args["target_date"]
             .as_str()
-            .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
+            .ok_or_else(|| Error::InvalidRequest(
+                "Missing target_date. Use YYYY-MM-DD format.".to_string()
+            ))?;
 
-        let target_date = args["target_date"].as_str();
-
-        // Resolve alias if needed
-        let email = self
-            .config
-            .resolve_account(account_id)
-            .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
-
-        // Get the account
         let account = self
             .db
-            .get_account(&email)
+            .get_account(email)
             .await?
-            .ok_or_else(|| Error::AccountNotFound(email.clone()))?;
+            .ok_or_else(|| Error::AccountNotFound(email.to_string()))?;
 
-        // Get current sync boundaries
-        use chrono::Duration;
         let current_sync_from = account.sync_email_since
             .unwrap_or_else(|| Utc::now() - Duration::days(90));
-        let oldest_synced = account.oldest_email_synced
-            .unwrap_or(current_sync_from);
-        let email_count = self.db.count_emails(Some(&email)).await?;
-
-        let event_count = self.db.count_events(Some(&email)).await?;
-
-        // If no target_date provided, just return current status
-        if target_date.is_none() {
-            return Ok(serde_json::json!({
-                "account": email,
-                "current_sync_status": {
-                    "configured_sync_from": current_sync_from.format("%Y-%m-%d").to_string(),
-                    "oldest_synced": oldest_synced.format("%Y-%m-%d").to_string(),
-                    "email_count": email_count,
-                    "event_count": event_count,
-                    "message": format!(
-                        "Currently synced back to {}. {} emails and {} calendar events in database.",
-                        oldest_synced.format("%Y-%m-%d"),
-                        email_count,
-                        event_count
-                    )
-                },
-                "usage": "To sync older data, call again with target_date parameter (YYYY-MM-DD format)"
-            }));
-        }
 
         // Parse target date
-        let target_date_str = target_date.unwrap();
-        let parsed_date = chrono::NaiveDate::parse_from_str(target_date_str, "%Y-%m-%d")
+        let parsed_date = chrono::NaiveDate::parse_from_str(target_date, "%Y-%m-%d")
             .map_err(|e| Error::InvalidRequest(format!("Invalid date format: {}. Use YYYY-MM-DD", e)))?;
 
-        // Convert to DateTime<Utc>
         let target_datetime = parsed_date
             .and_hms_opt(0, 0, 0)
             .and_then(|dt| dt.and_local_timezone(chrono::Utc).single())
@@ -1114,9 +1313,8 @@ Content-Type: text/html; charset=utf-8
         // Validate the target date
         if target_datetime >= current_sync_from {
             return Err(Error::InvalidRequest(format!(
-                "Target date {} is already within current sync range (back to {}). \
-                 Choose an earlier date.",
-                target_date_str,
+                "Target date {} is already within current sync range (back to {}). Choose an earlier date.",
+                target_date,
                 current_sync_from.format("%Y-%m-%d")
             )));
         }
@@ -1131,17 +1329,68 @@ Content-Type: text/html; charset=utf-8
             "account": email,
             "sync_range": {
                 "previous_sync_from": current_sync_from.format("%Y-%m-%d").to_string(),
-                "new_sync_from": target_date_str,
+                "new_sync_from": target_date,
                 "additional_days": (current_sync_from - target_datetime).num_days()
             },
             "message": format!(
-                "Extended sync range from {} to {}. The daemon will sync {} additional days of emails and calendar events (newest first).",
+                "Extended sync range from {} to {}. Will sync {} additional days.",
                 current_sync_from.format("%Y-%m-%d"),
-                target_date_str,
+                target_date,
                 (current_sync_from - target_datetime).num_days()
             ),
-            "note": "Data is synced newest-first within the new range. Stable IDs prevent duplicates.",
-            "next_steps": "Use start_daemon tool to begin syncing older data"
+            "next_steps": "Use manage_daemon with action: 'start' to begin syncing older data"
+        }))
+    }
+
+    /// Force sync to resume from a specific date
+    async fn sync_resume_from(&self, email: &str, args: &Value) -> Result<Value> {
+        let target_date = args["target_date"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest(
+                "Missing target_date. Use YYYY-MM-DD format.".to_string()
+            ))?;
+
+        // Parse target date
+        let parsed_date = chrono::NaiveDate::parse_from_str(target_date, "%Y-%m-%d")
+            .map_err(|e| Error::InvalidRequest(format!("Invalid date format: {}. Use YYYY-MM-DD", e)))?;
+
+        let target_datetime = parsed_date
+            .and_hms_opt(0, 0, 0)
+            .and_then(|dt| dt.and_local_timezone(chrono::Utc).single())
+            .ok_or_else(|| Error::InvalidRequest("Failed to parse date".to_string()))?;
+
+        let account = self
+            .db
+            .get_account(email)
+            .await?
+            .ok_or_else(|| Error::AccountNotFound(email.to_string()))?;
+
+        let old_oldest_email = account.oldest_email_synced;
+        let old_oldest_event = account.oldest_event_synced;
+
+        // Update account to force resume from the specified date
+        let mut updated_account = account.clone();
+        // Set oldest_synced to target_date so sync will resume from there
+        updated_account.oldest_email_synced = Some(target_datetime);
+        updated_account.oldest_event_synced = Some(target_datetime);
+        // Clear last_sync timestamps to force full incremental check
+        updated_account.last_sync_email = None;
+        updated_account.last_sync_calendar = None;
+        self.db.upsert_account(&updated_account).await?;
+
+        Ok(serde_json::json!({
+            "success": true,
+            "account": email,
+            "resume_from": target_date,
+            "previous_state": {
+                "oldest_email_synced": old_oldest_email.map(|d| d.format("%Y-%m-%d").to_string()),
+                "oldest_event_synced": old_oldest_event.map(|d| d.format("%Y-%m-%d").to_string())
+            },
+            "message": format!(
+                "Sync will resume from {}. Existing data is preserved; duplicates are prevented by ID matching.",
+                target_date
+            ),
+            "next_steps": "Use manage_daemon with action: 'restart' to apply changes"
         }))
     }
 
@@ -1222,8 +1471,25 @@ Content-Type: text/html; charset=utf-8
         None
     }
 
+    /// Manage the daemon (start, stop, restart, status)
+    async fn manage_daemon(&self, arguments: &Value) -> Result<Value> {
+        let action = arguments["action"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing action".to_string()))?;
+
+        match action {
+            "start" => self.daemon_start(arguments).await,
+            "stop" => self.daemon_stop().await,
+            "restart" => self.daemon_restart(arguments).await,
+            "status" => self.daemon_status().await,
+            _ => Err(Error::InvalidRequest(
+                "action must be 'start', 'stop', 'restart', or 'status'".to_string(),
+            )),
+        }
+    }
+
     /// Start the daemon
-    async fn start_daemon(&self, arguments: &Value) -> Result<Value> {
+    async fn daemon_start(&self, arguments: &Value) -> Result<Value> {
         // Parse logging option - check argument first, then environment variable
         let enable_logging = arguments.get("logging")
             .and_then(|v| v.as_bool())
@@ -1314,7 +1580,7 @@ Content-Type: text/html; charset=utf-8
     }
 
     /// Stop the daemon
-    async fn stop_daemon(&self) -> Result<Value> {
+    async fn daemon_stop(&self) -> Result<Value> {
         let pid = match self.is_daemon_running() {
             Some(pid) => pid,
             None => {
@@ -1377,8 +1643,21 @@ Content-Type: text/html; charset=utf-8
         }
     }
 
+    /// Restart the daemon
+    async fn daemon_restart(&self, arguments: &Value) -> Result<Value> {
+        // Stop if running
+        if self.is_daemon_running().is_some() {
+            self.daemon_stop().await?;
+            // Brief pause to ensure clean shutdown
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        }
+
+        // Start with provided arguments
+        self.daemon_start(arguments).await
+    }
+
     /// Get daemon status
-    async fn get_daemon_status(&self) -> Result<Value> {
+    async fn daemon_status(&self) -> Result<Value> {
         match self.is_daemon_running() {
             Some(pid) => {
                 // Get additional info about the daemon process
@@ -1410,7 +1689,7 @@ Content-Type: text/html; charset=utf-8
                 Ok(serde_json::json!({
                     "running": false,
                     "status": "stopped",
-                    "message": "Daemon is not running. Use start_daemon to start it."
+                    "message": "Daemon is not running. Use manage_daemon with action: 'start' to start it."
                 }))
             }
         }

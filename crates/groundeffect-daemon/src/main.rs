@@ -239,6 +239,7 @@ Content-Type: text/html; charset=utf-8
             status: AccountStatus::Active,
             sync_email_since: Some(Utc::now() - Duration::days(365)),
             oldest_email_synced: None,
+            oldest_event_synced: None,
         };
         db.upsert_account(&account).await?;
         println!("✅ Account created: {}", account.id);

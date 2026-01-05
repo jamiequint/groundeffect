@@ -184,11 +184,28 @@ pub struct AccountConfig {
     /// Whether syncing is enabled for this account
     #[serde(default = "default_true")]
     pub sync_enabled: bool,
+
+    /// Whether to sync emails for this account
+    #[serde(default = "default_true")]
+    pub sync_email: bool,
+
+    /// Whether to sync calendar for this account
+    #[serde(default = "default_true")]
+    pub sync_calendar: bool,
+
+    /// Folders to sync (empty = all folders)
+    #[serde(default)]
+    pub folders: Vec<String>,
 }
 
 impl Default for AccountConfig {
     fn default() -> Self {
-        Self { sync_enabled: true }
+        Self {
+            sync_enabled: true,
+            sync_email: true,
+            sync_calendar: true,
+            folders: vec![],
+        }
     }
 }
 

@@ -43,56 +43,71 @@ impl CalDavClient {
 
     /// Fetch events from the primary calendar with optional date filter
     pub async fn fetch_events(&self, since: Option<DateTime<Utc>>) -> Result<Vec<CalendarEvent>> {
-        self.rate_limiter.wait().await;
-
-        let access_token = self.oauth.get_valid_token(&self.account_id).await?;
-
         // Default to 1 year ago if no since date specified
         // Google Calendar API requires timeMin when using singleEvents=true with orderBy=startTime
         let time_min = since.unwrap_or_else(|| Utc::now() - chrono::Duration::days(365));
         // Format as RFC3339 and URL-encode (the '+' in timezone needs encoding)
         let time_min_encoded = time_min.to_rfc3339().replace('+', "%2B");
 
-        // Use Google Calendar API instead of CalDAV for easier parsing
-        let url = format!(
-            "https://www.googleapis.com/calendar/v3/calendars/primary/events?\
-             maxResults=2500&\
-             singleEvents=true&\
-             orderBy=startTime&\
-             timeMin={}",
-            time_min_encoded
-        );
+        let mut all_events = Vec::new();
+        let mut page_token: Option<String> = None;
 
-        let response = self
-            .client
-            .get(&url)
-            .bearer_auth(&access_token)
-            .send()
-            .await?;
+        loop {
+            self.rate_limiter.wait().await;
+            let access_token = self.oauth.get_valid_token(&self.account_id).await?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(Error::CalDav(format!(
-                "Failed to fetch events: {} - {}",
-                status, body
-            )));
-        }
+            // Use Google Calendar API instead of CalDAV for easier parsing
+            let mut url = format!(
+                "https://www.googleapis.com/calendar/v3/calendars/primary/events?\
+                 maxResults=2500&\
+                 singleEvents=true&\
+                 orderBy=startTime&\
+                 timeMin={}",
+                time_min_encoded
+            );
 
-        let json: serde_json::Value = response.json().await?;
-        let items = json["items"].as_array().ok_or_else(|| {
-            Error::CalDav("Invalid response: no items array".to_string())
-        })?;
+            if let Some(ref token) = page_token {
+                url.push_str(&format!("&pageToken={}", token));
+            }
 
-        let mut events = Vec::new();
-        for item in items {
-            if let Some(event) = self.parse_google_event(item)? {
-                events.push(event);
+            let response = self
+                .client
+                .get(&url)
+                .bearer_auth(&access_token)
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(Error::CalDav(format!(
+                    "Failed to fetch events: {} - {}",
+                    status, body
+                )));
+            }
+
+            let json: serde_json::Value = response.json().await?;
+            let items = json["items"].as_array().ok_or_else(|| {
+                Error::CalDav("Invalid response: no items array".to_string())
+            })?;
+
+            for item in items {
+                if let Some(event) = self.parse_google_event(item)? {
+                    all_events.push(event);
+                }
+            }
+
+            // Check for next page
+            if let Some(next_token) = json["nextPageToken"].as_str() {
+                debug!("Fetched {} events so far, getting next page", all_events.len());
+                page_token = Some(next_token.to_string());
+            } else {
+                break;
             }
         }
 
-        info!("Fetched {} events for {}", events.len(), self.account_id);
-        Ok(events)
+        info!("Fetched {} events for {}", all_events.len(), self.account_id);
+        Ok(all_events)
     }
 
     /// Parse a Google Calendar API event into our CalendarEvent struct

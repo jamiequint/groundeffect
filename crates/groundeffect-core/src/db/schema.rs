@@ -121,6 +121,7 @@ pub fn account_schema() -> Schema {
         Field::new("status", DataType::Utf8, false),
         Field::new("sync_email_since", DataType::Int64, true),
         Field::new("oldest_email_synced", DataType::Int64, true),
+        Field::new("oldest_event_synced", DataType::Int64, true),
     ])
 }
 
@@ -698,10 +699,88 @@ pub fn account_to_batch(account: &Account) -> Result<RecordBatch> {
         Arc::new(Int64Array::from(vec![account
             .oldest_email_synced
             .map(|d| d.timestamp())])),
+        Arc::new(Int64Array::from(vec![account
+            .oldest_event_synced
+            .map(|d| d.timestamp())])),
     ];
 
     let batch = RecordBatch::try_new(Arc::new(schema), arrays)?;
     Ok(batch)
+}
+
+/// Convert a record batch row to an account (lenient version for schema migration)
+/// Handles missing columns by using defaults
+pub fn batch_to_account_lenient(batch: &RecordBatch, row: usize) -> Result<Account> {
+    let get_string = |col: &str| -> String {
+        batch
+            .column_by_name(col)
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            .map(|a| a.value(row).to_string())
+            .unwrap_or_default()
+    };
+
+    let get_opt_string = |col: &str| -> Option<String> {
+        batch
+            .column_by_name(col)
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            .and_then(|a| {
+                if a.is_null(row) {
+                    None
+                } else {
+                    Some(a.value(row).to_string())
+                }
+            })
+    };
+
+    let get_i64 = |col: &str| -> i64 {
+        batch
+            .column_by_name(col)
+            .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+            .map(|a| a.value(row))
+            .unwrap_or(0)
+    };
+
+    let get_opt_i64 = |col: &str| -> Option<i64> {
+        batch
+            .column_by_name(col)
+            .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+            .and_then(|a| {
+                if a.is_null(row) {
+                    None
+                } else {
+                    Some(a.value(row))
+                }
+            })
+    };
+
+    let status = match get_string("status").as_str() {
+        "active" => AccountStatus::Active,
+        "needs_reauth" => AccountStatus::NeedsReauth,
+        "disabled" => AccountStatus::Disabled,
+        "syncing" => AccountStatus::Syncing,
+        _ => AccountStatus::Active,
+    };
+
+    let added_at = DateTime::from_timestamp(get_i64("added_at"), 0).unwrap_or_else(Utc::now);
+    let last_sync_email = get_opt_i64("last_sync_email").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let last_sync_calendar = get_opt_i64("last_sync_calendar").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let sync_email_since = get_opt_i64("sync_email_since").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let oldest_email_synced = get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    // This column may not exist in old schema - defaults to None
+    let oldest_event_synced = get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+
+    Ok(Account {
+        id: get_string("id"),
+        alias: get_opt_string("alias"),
+        display_name: get_string("display_name"),
+        added_at,
+        last_sync_email,
+        last_sync_calendar,
+        status,
+        sync_email_since,
+        oldest_email_synced,
+        oldest_event_synced,
+    })
 }
 
 /// Convert a record batch row to an account
@@ -762,6 +841,7 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
 
     let sync_email_since = get_opt_i64("sync_email_since").and_then(|ts| DateTime::from_timestamp(ts, 0));
     let oldest_email_synced = get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let oldest_event_synced = get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
 
     Ok(Account {
         id: get_string("id"),
@@ -773,5 +853,6 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
         status,
         sync_email_since,
         oldest_email_synced,
+        oldest_event_synced,
     })
 }

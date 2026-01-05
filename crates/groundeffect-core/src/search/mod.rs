@@ -133,8 +133,12 @@ impl SearchEngine {
         let filter = options.build_filter();
 
         // Run BM25 and vector search in parallel
-        let bm25_results = self.bm25_search_emails(&table, query, &filter, options.limit * 2).await?;
-        let vector_results = self.vector_search_emails(&table, query, &filter, options.limit * 2).await?;
+        let (bm25_results, vector_results) = tokio::join!(
+            self.bm25_search_emails(&table, query, &filter, options.limit * 2),
+            self.vector_search_emails(&table, query, &filter, options.limit * 2)
+        );
+        let bm25_results = bm25_results?;
+        let vector_results = vector_results?;
 
         // Combine using RRF
         let combined = self.rrf_fusion(
@@ -144,11 +148,24 @@ impl SearchEngine {
             options.vector_weight,
         );
 
-        // Fetch full email data for top results
-        let mut results = Vec::new();
-        for (id, score) in combined.into_iter().take(options.limit) {
-            if let Some(email) = self.db.get_email(&id).await? {
-                let summary = EmailSummary::from(&email);
+        // Get top result IDs and scores
+        let top_results: Vec<(String, f32)> = combined.into_iter().take(options.limit).collect();
+        let ids: Vec<String> = top_results.iter().map(|(id, _)| id.clone()).collect();
+
+        // Batch fetch all emails in a single query
+        let emails = self.db.get_emails_batch(&ids).await?;
+
+        // Build a map for O(1) lookup while preserving RRF order
+        let email_map: std::collections::HashMap<String, _> = emails
+            .into_iter()
+            .map(|e| (e.id.clone(), e))
+            .collect();
+
+        // Build results in RRF-ranked order
+        let mut results = Vec::with_capacity(top_results.len());
+        for (id, score) in top_results {
+            if let Some(email) = email_map.get(&id) {
+                let summary = EmailSummary::from(email);
                 results.push(EmailSearchResult {
                     email: summary,
                     score,
@@ -306,8 +323,12 @@ impl SearchEngine {
         let filter = options.build_filter();
 
         // Run BM25 and vector search in parallel
-        let bm25_results = self.bm25_search_events(&table, query, &filter, options.limit * 2).await?;
-        let vector_results = self.vector_search_events(&table, query, &filter, options.limit * 2).await?;
+        let (bm25_results, vector_results) = tokio::join!(
+            self.bm25_search_events(&table, query, &filter, options.limit * 2),
+            self.vector_search_events(&table, query, &filter, options.limit * 2)
+        );
+        let bm25_results = bm25_results?;
+        let vector_results = vector_results?;
 
         // Combine using RRF
         let combined = self.rrf_fusion(
@@ -317,11 +338,24 @@ impl SearchEngine {
             0.5,
         );
 
-        // Fetch full event data for top results
-        let mut results = Vec::new();
-        for (id, score) in combined.into_iter().take(options.limit) {
-            if let Some(event) = self.db.get_event(&id).await? {
-                results.push(CalendarSearchResult { event, score });
+        // Get top result IDs and scores
+        let top_results: Vec<(String, f32)> = combined.into_iter().take(options.limit).collect();
+        let ids: Vec<String> = top_results.iter().map(|(id, _)| id.clone()).collect();
+
+        // Batch fetch all events in a single query
+        let events = self.db.get_events_batch(&ids).await?;
+
+        // Build a map for O(1) lookup while preserving RRF order
+        let event_map: std::collections::HashMap<String, _> = events
+            .into_iter()
+            .map(|e| (e.id.clone(), e))
+            .collect();
+
+        // Build results in RRF-ranked order
+        let mut results = Vec::with_capacity(top_results.len());
+        for (id, score) in top_results {
+            if let Some(event) = event_map.get(&id) {
+                results.push(CalendarSearchResult { event: event.clone(), score });
             }
         }
 
