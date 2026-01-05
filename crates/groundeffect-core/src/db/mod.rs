@@ -539,6 +539,44 @@ impl Database {
 
         Ok(events)
     }
+
+    /// Get a map of google_event_id -> etag for all events in an account
+    /// Used to detect which events have changed during incremental sync
+    pub async fn get_event_etags(&self, account_id: &str) -> Result<std::collections::HashMap<String, String>> {
+        let table = self.events_table()?;
+
+        // Only fetch the fields we need for comparison
+        let query = table
+            .query()
+            .select(lancedb::query::Select::columns(&["google_event_id", "etag"]))
+            .only_if(&format!("account_id = '{}'", account_id));
+
+        let results = query.execute().await?;
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut etags = std::collections::HashMap::new();
+        for batch in &batches {
+            let google_event_ids = batch
+                .column_by_name("google_event_id")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            let etag_col = batch
+                .column_by_name("etag")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+
+            if let (Some(ids), Some(etag_arr)) = (google_event_ids, etag_col) {
+                for i in 0..batch.num_rows() {
+                    if let (Some(id), Some(etag)) = (ids.value(i).to_string().into(), etag_arr.value(i).to_string().into()) {
+                        let id: String = ids.value(i).to_string();
+                        let etag: String = etag_arr.value(i).to_string();
+                        etags.insert(id, etag);
+                    }
+                }
+            }
+        }
+
+        debug!("Loaded {} event etags for {}", etags.len(), account_id);
+        Ok(etags)
+    }
 }
 
 // Helper trait for collecting async streams

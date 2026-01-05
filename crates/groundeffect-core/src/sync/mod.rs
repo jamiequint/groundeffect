@@ -421,54 +421,77 @@ impl SyncManager {
 
         let events = caldav_client.fetch_events(since).await?;
 
-        info!("Fetched {} calendar events for {}", events.len(), account_id);
+        let fetched_count = events.len();
+        info!("Fetched {} calendar events for {}", fetched_count, account_id);
 
-        // Generate embeddings in batches for performance
-        // 128 is optimal for M4 Apple Silicon, use 64 for M1-M3
-        const BATCH_SIZE: usize = 128;
-        let total = events.len();
-        let mut processed = 0;
+        // Get existing event etags to skip unchanged events
+        let existing_etags = self.db.get_event_etags(account_id).await.unwrap_or_default();
 
-        for chunk in events.chunks(BATCH_SIZE) {
-            // Collect texts for batch embedding
-            let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
+        // Filter to only new or changed events (compare by google_event_id and etag)
+        let changed_events: Vec<_> = events
+            .into_iter()
+            .filter(|e| {
+                match existing_etags.get(&e.google_event_id) {
+                    Some(existing_etag) => existing_etag != &e.etag, // Changed
+                    None => true, // New event
+                }
+            })
+            .collect();
+        let changed_count = changed_events.len();
 
-            // Generate embeddings for entire batch at once
-            let embeddings = self.embedding.embed_batch(&texts)?;
+        if changed_events.is_empty() {
+            info!("Calendar sync complete for {} - no changes detected", account_id);
+        } else {
+            info!("{} new/changed calendar events to process for {}", changed_events.len(), account_id);
 
-            // Attach embeddings to events
-            let events_with_embeddings: Vec<CalendarEvent> = chunk
-                .iter()
-                .zip(embeddings.into_iter())
-                .map(|(event, embedding)| {
-                    let mut event = event.clone();
-                    event.embedding = Some(embedding);
-                    event
-                })
-                .collect();
+            // Generate embeddings in batches for performance
+            // 128 is optimal for M4 Apple Silicon, use 64 for M1-M3
+            const BATCH_SIZE: usize = 128;
+            let total = changed_events.len();
+            let mut processed = 0;
 
-            // Batch insert all events at once
-            self.db.upsert_events(&events_with_embeddings).await?;
+            for chunk in changed_events.chunks(BATCH_SIZE) {
+                // Collect texts for batch embedding
+                let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
 
-            processed += chunk.len();
+                // Generate embeddings for entire batch at once
+                let embeddings = self.embedding.embed_batch(&texts)?;
 
-            // Log progress every batch
-            info!("Embedded and stored {}/{} calendar events for {}", processed, total, account_id);
+                // Attach embeddings to events
+                let events_with_embeddings: Vec<CalendarEvent> = chunk
+                    .iter()
+                    .zip(embeddings.into_iter())
+                    .map(|(event, embedding)| {
+                        let mut event = event.clone();
+                        event.embedding = Some(embedding);
+                        event
+                    })
+                    .collect();
+
+                // Batch insert all events at once
+                self.db.upsert_events(&events_with_embeddings).await?;
+
+                processed += chunk.len();
+
+                // Log progress every batch
+                info!("Embedded and stored {}/{} calendar events for {}", processed, total, account_id);
+            }
+
+            info!("Calendar sync complete for {} - {} events updated", account_id, total);
         }
-
-        info!("Calendar sync complete for {} - {} events stored", account_id, total);
 
         self.emit_event(SyncEvent::SyncCompleted {
             account_id: account_id.to_string(),
             sync_type: SyncType::Calendar,
-            count: events.len(),
+            count: changed_count,
         }).await;
 
         // Update state and persist to database
         let now = Utc::now();
+        let total_event_count = self.db.count_events(Some(account_id)).await.unwrap_or(0);
         if let Some(state) = self.account_states.write().get_mut(account_id) {
             state.last_calendar_sync = Some(now);
-            state.event_count = events.len() as u64;
+            state.event_count = total_event_count;
         }
 
         // Persist last_sync_calendar to database
