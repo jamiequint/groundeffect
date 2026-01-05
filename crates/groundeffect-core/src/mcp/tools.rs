@@ -43,8 +43,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "years_to_sync": {
                         "type": "string",
-                        "description": "For 'add': years of history ('1'-'20' or 'all'). Default: 1. More can be synced later.",
-                        "default": "1"
+                        "description": "For 'add': years of email history to sync ('1'-'20' or 'all'). REQUIRED - will prompt if not provided."
                     },
                     "sync_email": {
                         "type": "boolean",
@@ -703,8 +702,29 @@ impl ToolHandler {
     async fn add_account(&self, args: &Value) -> Result<Value> {
         let alias = args["alias"].as_str().map(|s| s.to_string());
 
+        // Require years_to_sync - prompt user if not provided
+        let years_to_sync_str = match args.get("years_to_sync").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => {
+                return Ok(serde_json::json!({
+                    "success": false,
+                    "needs_input": true,
+                    "message": "Please specify how much email history to sync",
+                    "prompt": "How many years of email history should I sync?",
+                    "options": [
+                        {"value": "1", "label": "1 year (recommended for most users)"},
+                        {"value": "2", "label": "2 years"},
+                        {"value": "5", "label": "5 years"},
+                        {"value": "10", "label": "10 years"},
+                        {"value": "all", "label": "All email history (may take a long time)"}
+                    ],
+                    "parameter": "years_to_sync",
+                    "note": "You can always sync more history later with manage_sync action: 'extend'"
+                }));
+            }
+        };
+
         // Parse years_to_sync: "1"-"20" for specific years, "all" for no limit
-        let years_to_sync_str = args["years_to_sync"].as_str().unwrap_or("1");
         let years_to_sync: Option<u32> = if years_to_sync_str.eq_ignore_ascii_case("all") {
             None // No limit
         } else {
