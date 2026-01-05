@@ -44,8 +44,8 @@ class Groundeffect < Formula
       3. Run the setup wizard:
          groundeffect-daemon setup --install
 
-      4. Add a Google account:
-         groundeffect-daemon add-account
+      4. Add a Google account by asking Claude Code:
+         "Add my Gmail account to groundeffect"
 
       Get OAuth credentials from: https://console.cloud.google.com/apis/credentials
       (Create OAuth 2.0 Client ID > Desktop app, enable Gmail & Calendar APIs)

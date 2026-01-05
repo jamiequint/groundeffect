@@ -120,12 +120,13 @@ If you installed via Homebrew, run the setup wizard:
 groundeffect-daemon setup --install
 ```
 
-This configures daemon settings and installs a launchd agent for auto-start.
+This configures daemon settings (which can be changed later with `groundeffect-daemon configure`) and installs a launchd agent for auto-start.
 
 ### Add an account
 
-```bash
-groundeffect-daemon add-account
+Add a Google account by asking Claude Code:
+```
+"Add my Gmail account to groundeffect"
 ```
 
 This opens a browser for Google OAuth. After authentication, the account syncs automatically.
@@ -144,7 +145,7 @@ If you used `setup --install`, the daemon starts automatically at login via laun
 groundeffect-daemon configure
 ```
 
-Interactively change logging, poll intervals, and other settings. Restarts the daemon if running via launchd.
+Interactively change poll intervals and other settings. Restarts the daemon if running via launchd.
 
 ### Uninstall launchd agent
 
@@ -280,33 +281,19 @@ GroundEffect runs as **two separate processes**, each with its own log file:
 | **Sync Daemon** | `groundeffect-daemon` | `daemon.log` | Background sync, IMAP/CalDAV, embeddings |
 | **MCP Server** | `groundeffect-mcp` | `mcp.log` | Handles Claude Code tool calls, searches |
 
-These processes run independently—the MCP server can start/stop the daemon, but they don't share a process. Logging is **disabled by default** for both.
+These processes run independently—the MCP server can start/stop the daemon, but they don't share a process. The daemon always logs to file. MCP server logging is disabled by default.
 
 ### Log File Location
 
 ```
 ~/.local/share/groundeffect/logs/
 ├── daemon.log    # Sync daemon logs
-└── mcp.log       # MCP server logs
+└── mcp.log       # MCP server logs (if enabled)
 ```
 
-### Enable Logging
+### Enable MCP Server Logging
 
-**Sync Daemon** (any of these methods):
-```bash
-groundeffect-daemon --log                    # CLI flag
-GROUNDEFFECT_DAEMON_LOGGING=true groundeffect-daemon  # Environment variable
-```
-Or via MCP tool: `manage_daemon` with `action: "start"` and `logging: true`
-
-**MCP Server**:
-```bash
-GROUNDEFFECT_MCP_LOGGING=true groundeffect-mcp
-```
-
-### Enable Both via Claude Code Config
-
-To enable logging for both processes, add the logging env vars to your `~/.claude.json`:
+To enable MCP server logging, add the env var to your `~/.claude.json`:
 
 ```json
 {
@@ -317,16 +304,12 @@ To enable logging for both processes, add the logging env vars to your `~/.claud
       "env": {
         "GROUNDEFFECT_GOOGLE_CLIENT_ID": "${GROUNDEFFECT_GOOGLE_CLIENT_ID}",
         "GROUNDEFFECT_GOOGLE_CLIENT_SECRET": "${GROUNDEFFECT_GOOGLE_CLIENT_SECRET}",
-        "GROUNDEFFECT_DAEMON_LOGGING": "true",
         "GROUNDEFFECT_MCP_LOGGING": "true"
       }
     }
   }
 }
 ```
-
-- `GROUNDEFFECT_MCP_LOGGING` enables MCP server logging immediately when Claude Code connects
-- `GROUNDEFFECT_DAEMON_LOGGING` enables daemon logging when started via the `manage_daemon` tool
 
 ## Data Storage
 
@@ -340,7 +323,7 @@ To enable logging for both processes, add the logging env vars to your `~/.claud
 ├── lancedb/               # LanceDB database (emails, events, accounts)
 ├── attachments/           # Downloaded attachments
 ├── models/                # Embedding model files
-├── logs/                  # Log files (if enabled)
+├── logs/                  # Log files
 └── cache/
     └── sync_state/        # Per-account sync state
 ```
@@ -349,9 +332,9 @@ To enable logging for both processes, add the logging env vars to your `~/.claud
 
 ### "OAuth token expired and refresh failed"
 
-Re-authenticate the account:
-```bash
-groundeffect-daemon add-account
+Re-authenticate by asking Claude Code to add the account again:
+```
+"Add my Gmail account to groundeffect"
 ```
 
 ### "Table not found" errors

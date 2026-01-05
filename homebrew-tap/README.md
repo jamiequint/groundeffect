@@ -22,15 +22,18 @@ groundeffect-daemon setup --install
 ```
 
 This will:
-1. Configure daemon settings interactively
+1. Configure daemon settings interactively (these can be changed later with `groundeffect-daemon configure`)
 2. Install a launchd agent for auto-start at login
 
 ## Usage
 
-```bash
-# Add a Google account
-groundeffect-daemon add-account
+Add a Google account by asking Claude Code:
+```
+"Add my Gmail account to groundeffect"
+```
 
+Or from the command line:
+```bash
 # Check daemon status
 groundeffect-daemon list-accounts
 
