@@ -145,7 +145,16 @@ If you used `setup --install`, the daemon starts automatically at login via laun
 groundeffect-daemon configure
 ```
 
-Interactively change poll intervals and other settings. Restarts the daemon if running via launchd.
+Interactively change settings. Restarts the daemon if running via launchd.
+
+**Available settings:**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Logging | Off | Write logs to `~/.local/share/groundeffect/logs/daemon.log` |
+| Email poll interval | 300s | How often to check for new emails (IMAP IDLE provides instant notifications regardless) |
+| Calendar poll interval | 300s | How often to sync calendar events |
+| Max concurrent fetches | 10 | Parallel email downloads during sync |
 
 ### Uninstall launchd agent
 

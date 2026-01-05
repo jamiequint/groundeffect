@@ -373,6 +373,10 @@ impl Config {
 /// Stored separately at ~/.config/groundeffect/daemon.toml
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
+    /// Enable logging to ~/.local/share/groundeffect/logs/
+    #[serde(default)]
+    pub logging_enabled: bool,
+
     /// Email poll interval in seconds (default: 300)
     #[serde(default = "default_poll_interval")]
     pub email_poll_interval_secs: u64,
@@ -389,6 +393,7 @@ pub struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
+            logging_enabled: false,
             email_poll_interval_secs: 300,
             calendar_poll_interval_secs: 300,
             max_concurrent_fetches: 10,

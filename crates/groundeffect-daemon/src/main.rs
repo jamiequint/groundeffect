@@ -692,6 +692,13 @@ fn run_setup(install: bool, uninstall: bool) -> Result<()> {
     println!("Configure daemon settings (press Enter for defaults):");
     println!("(These can be changed later with `groundeffect-daemon configure`)\n");
 
+    // Logging
+    let logging_enabled = Confirm::new()
+        .with_prompt("Enable logging to ~/.local/share/groundeffect/logs/")
+        .default(daemon_config.logging_enabled)
+        .interact()?;
+    daemon_config.logging_enabled = logging_enabled;
+
     // Email poll interval
     let email_interval: u64 = Input::new()
         .with_prompt("Email poll interval (seconds)")
@@ -745,6 +752,7 @@ fn run_configure() -> Result<()> {
     let mut daemon_config = DaemonConfig::load().unwrap_or_default();
 
     println!("Current settings:");
+    println!("  Logging: {}", if daemon_config.logging_enabled { "enabled" } else { "disabled" });
     println!("  Email poll interval: {}s", daemon_config.email_poll_interval_secs);
     println!("  Calendar poll interval: {}s", daemon_config.calendar_poll_interval_secs);
     println!("  Max concurrent fetches: {}", daemon_config.max_concurrent_fetches);
@@ -752,6 +760,7 @@ fn run_configure() -> Result<()> {
 
     // Select what to change
     let options = &[
+        "Logging",
         "Email poll interval",
         "Calendar poll interval",
         "Max concurrent fetches",
@@ -762,33 +771,44 @@ fn run_configure() -> Result<()> {
     let selection = Select::new()
         .with_prompt("What would you like to change?")
         .items(options)
-        .default(4)
+        .default(5)
         .interact()?;
 
     let changed = match selection {
         0 => {
+            daemon_config.logging_enabled = Confirm::new()
+                .with_prompt("Enable logging to ~/.local/share/groundeffect/logs/")
+                .default(daemon_config.logging_enabled)
+                .interact()?;
+            true
+        }
+        1 => {
             daemon_config.email_poll_interval_secs = Input::new()
                 .with_prompt("Email poll interval (seconds)")
                 .default(daemon_config.email_poll_interval_secs)
                 .interact_text()?;
             true
         }
-        1 => {
+        2 => {
             daemon_config.calendar_poll_interval_secs = Input::new()
                 .with_prompt("Calendar poll interval (seconds)")
                 .default(daemon_config.calendar_poll_interval_secs)
                 .interact_text()?;
             true
         }
-        2 => {
+        3 => {
             daemon_config.max_concurrent_fetches = Input::new()
                 .with_prompt("Max concurrent fetches")
                 .default(daemon_config.max_concurrent_fetches)
                 .interact_text()?;
             true
         }
-        3 => {
+        4 => {
             // Change all settings
+            daemon_config.logging_enabled = Confirm::new()
+                .with_prompt("Enable logging to ~/.local/share/groundeffect/logs/")
+                .default(daemon_config.logging_enabled)
+                .interact()?;
             daemon_config.email_poll_interval_secs = Input::new()
                 .with_prompt("Email poll interval (seconds)")
                 .default(daemon_config.email_poll_interval_secs)
@@ -883,7 +903,7 @@ fn install_launchd_agent(config: &DaemonConfig) -> Result<()> {
 </dict>
 </plist>"#,
         daemon_path = daemon_path.display(),
-        logging_flag = " --log",  // Always enable file logging
+        logging_flag = if config.logging_enabled { " --log" } else { "" },
         stdout = log_dir.join("stdout.log").display(),
         stderr = log_dir.join("stderr.log").display(),
         email_interval = config.email_poll_interval_secs,

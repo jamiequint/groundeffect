@@ -410,7 +410,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         // Daemon management tools
         ToolDefinition {
             name: "manage_daemon".to_string(),
-            description: "Manage the GroundEffect sync daemon. Can start, stop, restart, or check status of the daemon that syncs emails and calendar events in the background. Logs are always written to ~/.local/share/groundeffect/logs/daemon.log.".to_string(),
+            description: "Manage the GroundEffect sync daemon. Can start, stop, restart, or check status of the daemon that syncs emails and calendar events in the background.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -418,6 +418,10 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "type": "string",
                         "enum": ["start", "stop", "restart", "status"],
                         "description": "Action to perform: 'start', 'stop', 'restart', or 'status'"
+                    },
+                    "logging": {
+                        "type": "boolean",
+                        "description": "Enable logging to ~/.local/share/groundeffect/logs/ (for start/restart)"
                     },
                     "email_poll_interval": {
                         "type": "integer",
@@ -2233,6 +2237,12 @@ Content-Type: text/html; charset=utf-8
         let mut config_changed = false;
 
         // Apply parameter overrides from arguments
+        if let Some(logging) = arguments.get("logging").and_then(|v| v.as_bool()) {
+            if daemon_config.logging_enabled != logging {
+                daemon_config.logging_enabled = logging;
+                config_changed = true;
+            }
+        }
         if let Some(interval) = arguments.get("email_poll_interval").and_then(|v| v.as_u64()) {
             if daemon_config.email_poll_interval_secs != interval {
                 daemon_config.email_poll_interval_secs = interval;
@@ -2265,6 +2275,7 @@ Content-Type: text/html; charset=utf-8
                 "status": "running",
                 "pid": pid,
                 "settings": {
+                    "logging_enabled": daemon_config.logging_enabled,
                     "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
                     "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
                     "max_concurrent_fetches": daemon_config.max_concurrent_fetches
@@ -2286,8 +2297,10 @@ Content-Type: text/html; charset=utf-8
         // Start daemon as background process
         let mut cmd = Command::new(&daemon_path);
 
-        // Always enable file logging
-        cmd.arg("--log");
+        // Add logging flag if enabled
+        if daemon_config.logging_enabled {
+            cmd.arg("--log");
+        }
 
         // Pass through OAuth credentials if available
         if let Some(id) = &client_id {
@@ -2331,11 +2344,12 @@ Content-Type: text/html; charset=utf-8
                 "status": "running",
                 "pid": pid,
                 "settings": {
+                    "logging_enabled": daemon_config.logging_enabled,
                     "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
                     "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
                     "max_concurrent_fetches": daemon_config.max_concurrent_fetches
                 },
-                "log_file": "~/.local/share/groundeffect/logs/daemon.log"
+                "log_file": if daemon_config.logging_enabled { Some("~/.local/share/groundeffect/logs/daemon.log") } else { None }
             }))
         } else {
             // Clean up PID file if daemon didn't start
@@ -2435,12 +2449,13 @@ Content-Type: text/html; charset=utf-8
                     "pid": pid,
                     "status": "running",
                     "settings": {
+                        "logging_enabled": daemon_config.logging_enabled,
                         "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
                         "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
                         "max_concurrent_fetches": daemon_config.max_concurrent_fetches
                     },
                     "launchd_agent_installed": launchd_installed,
-                    "log_file": "~/.local/share/groundeffect/logs/daemon.log"
+                    "log_file": if daemon_config.logging_enabled { Some("~/.local/share/groundeffect/logs/daemon.log") } else { None }
                 });
 
                 // Try to get process uptime on Unix
@@ -2467,6 +2482,7 @@ Content-Type: text/html; charset=utf-8
                     "status": "stopped",
                     "message": "Daemon is not running. Use manage_daemon with action: 'start' to start it.",
                     "settings": {
+                        "logging_enabled": daemon_config.logging_enabled,
                         "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
                         "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
                         "max_concurrent_fetches": daemon_config.max_concurrent_fetches
