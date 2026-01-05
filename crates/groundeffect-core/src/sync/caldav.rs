@@ -41,19 +41,24 @@ impl CalDavClient {
         })
     }
 
-    /// Fetch all events from the primary calendar
-    pub async fn fetch_events(&self, sync_token: Option<&str>) -> Result<Vec<CalendarEvent>> {
+    /// Fetch events from the primary calendar with optional date filter
+    pub async fn fetch_events(&self, since: Option<DateTime<Utc>>) -> Result<Vec<CalendarEvent>> {
         self.rate_limiter.wait().await;
 
         let access_token = self.oauth.get_valid_token(&self.account_id).await?;
 
         // Use Google Calendar API instead of CalDAV for easier parsing
-        let url = format!(
+        let mut url = format!(
             "https://www.googleapis.com/calendar/v3/calendars/primary/events?\
              maxResults=2500&\
              singleEvents=true&\
              orderBy=startTime"
         );
+
+        // Add timeMin filter if since date is specified
+        if let Some(since_date) = since {
+            url.push_str(&format!("&timeMin={}", since_date.to_rfc3339()));
+        }
 
         let response = self
             .client

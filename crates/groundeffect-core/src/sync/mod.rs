@@ -364,13 +364,18 @@ impl SyncManager {
             sync_type: SyncType::Calendar,
         }).await;
 
+        // Get account's sync_since setting
+        let account = self.db.get_account(account_id).await?
+            .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
+        let since = account.sync_email_since; // Uses same date range as email
+
         let caldav_client = CalDavClient::new(
             account_id,
             self.oauth.clone(),
             self.rate_limiter.clone(),
         ).await?;
 
-        let events = caldav_client.fetch_events(None).await?;
+        let events = caldav_client.fetch_events(since).await?;
 
         info!("Fetched {} calendar events for {}", events.len(), account_id);
 

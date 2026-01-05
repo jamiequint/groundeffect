@@ -54,11 +54,9 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "description": "Optional friendly name for the account (e.g., 'work', 'personal')"
                     },
                     "years_to_sync": {
-                        "type": "integer",
-                        "description": "How many years of email history to sync (default: 1 year). Use 0 to sync only 90 days.",
-                        "default": 1,
-                        "minimum": 0,
-                        "maximum": 10
+                        "type": "string",
+                        "description": "How many years of email history to sync. Use '1'-'20' for specific years, or 'all' to sync entire history. Default: '1'",
+                        "default": "1"
                     }
                 }
             }),
@@ -307,8 +305,8 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "sync_older_emails".to_string(),
-            description: "Extend sync to include older emails. Shows current sync status and allows syncing further back. Syncs newest-first to prioritize recent emails within the new range.".to_string(),
+            name: "extend_sync_range".to_string(),
+            description: "Extend sync to include older data (both emails and calendar events). Shows current sync status and allows syncing further back. Syncs newest-first to prioritize recent data within the new range.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -370,7 +368,7 @@ impl ToolHandler {
             "create_event" => self.create_event(arguments).await,
             "get_sync_status" => self.get_sync_status(arguments).await,
             "reset_sync" => self.reset_sync(arguments).await,
-            "sync_older_emails" => self.sync_older_emails(arguments).await,
+            "extend_sync_range" => self.extend_sync_range(arguments).await,
             _ => Err(Error::ToolNotFound(name.to_string())),
         }?;
 
@@ -420,7 +418,23 @@ impl ToolHandler {
     /// Add a new Google account via OAuth
     async fn add_account(&self, args: &Value) -> Result<Value> {
         let alias = args["alias"].as_str().map(|s| s.to_string());
-        let years_to_sync = args["years_to_sync"].as_u64().unwrap_or(1) as u32;
+
+        // Parse years_to_sync: "1"-"20" for specific years, "all" for no limit
+        let years_to_sync_str = args["years_to_sync"].as_str().unwrap_or("1");
+        let years_to_sync: Option<u32> = if years_to_sync_str.eq_ignore_ascii_case("all") {
+            None // No limit
+        } else {
+            let years = years_to_sync_str.parse::<u32>()
+                .map_err(|_| Error::InvalidRequest(format!(
+                    "Invalid years_to_sync value '{}'. Use '1'-'20' or 'all'", years_to_sync_str
+                )))?;
+            if years < 1 || years > 20 {
+                return Err(Error::InvalidRequest(
+                    "years_to_sync must be between 1 and 20, or 'all'".to_string()
+                ));
+            }
+            Some(years)
+        };
 
         // Generate state for CSRF protection
         let state = format!("groundeffect_{}", uuid::Uuid::new_v4());
@@ -459,12 +473,9 @@ impl ToolHandler {
 
         // Calculate sync_email_since based on years_to_sync
         use chrono::Duration;
-        let sync_since = if years_to_sync == 0 {
-            // Default to 90 days
-            Some(Utc::now() - Duration::days(90))
-        } else {
-            Some(Utc::now() - Duration::days(years_to_sync as i64 * 365))
-        };
+        let sync_since = years_to_sync.map(|years| {
+            Utc::now() - Duration::days(years as i64 * 365)
+        });
 
         // Check if account already exists
         if let Some(existing) = self.db.get_account(&user_info.email).await? {
@@ -482,7 +493,7 @@ impl ToolHandler {
                     "alias": updated.alias,
                     "display_name": updated.display_name,
                     "status": "active",
-                    "years_to_sync": years_to_sync
+                    "years_to_sync": years_to_sync_str
                 }
             }))
         } else {
@@ -508,7 +519,7 @@ impl ToolHandler {
                     "alias": account.alias,
                     "display_name": account.display_name,
                     "status": "active",
-                    "years_to_sync": years_to_sync
+                    "years_to_sync": years_to_sync_str
                 },
                 "next_steps": "Run the daemon to start syncing: groundeffect-daemon"
             }))
@@ -832,8 +843,8 @@ Content-Type: text/html
         }))
     }
 
-    /// Sync older emails beyond the initial sync period
-    async fn sync_older_emails(&self, args: &Value) -> Result<Value> {
+    /// Extend sync range to include older emails and calendar events
+    async fn extend_sync_range(&self, args: &Value) -> Result<Value> {
         let account_id = args["account"]
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
@@ -861,21 +872,25 @@ Content-Type: text/html
             .unwrap_or(current_sync_from);
         let email_count = self.db.count_emails(Some(&email)).await?;
 
+        let event_count = self.db.count_events(Some(&email)).await?;
+
         // If no target_date provided, just return current status
         if target_date.is_none() {
             return Ok(serde_json::json!({
                 "account": email,
                 "current_sync_status": {
                     "configured_sync_from": current_sync_from.format("%Y-%m-%d").to_string(),
-                    "oldest_email_synced": oldest_synced.format("%Y-%m-%d").to_string(),
+                    "oldest_synced": oldest_synced.format("%Y-%m-%d").to_string(),
                     "email_count": email_count,
+                    "event_count": event_count,
                     "message": format!(
-                        "Currently synced back to {}. {} emails in database.",
+                        "Currently synced back to {}. {} emails and {} calendar events in database.",
                         oldest_synced.format("%Y-%m-%d"),
-                        email_count
+                        email_count,
+                        event_count
                     )
                 },
-                "usage": "To sync older emails, call again with target_date parameter (YYYY-MM-DD format)"
+                "usage": "To sync older data, call again with target_date parameter (YYYY-MM-DD format)"
             }));
         }
 
@@ -914,13 +929,13 @@ Content-Type: text/html
                 "additional_days": (current_sync_from - target_datetime).num_days()
             },
             "message": format!(
-                "Extended sync range from {} to {}. The daemon will sync {} additional days of email (newest first).",
+                "Extended sync range from {} to {}. The daemon will sync {} additional days of emails and calendar events (newest first).",
                 current_sync_from.format("%Y-%m-%d"),
                 target_date_str,
                 (current_sync_from - target_datetime).num_days()
             ),
-            "note": "Emails are synced newest-first, so recent emails in the new range will be available first. Email IDs are stable, so no duplicates will be created.",
-            "next_steps": "Run the daemon to sync older emails: groundeffect-daemon"
+            "note": "Data is synced newest-first within the new range. Stable IDs prevent duplicates.",
+            "next_steps": "Run the daemon to sync older data: groundeffect-daemon"
         }))
     }
 }
