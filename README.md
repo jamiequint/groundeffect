@@ -145,21 +145,50 @@ This is typically invoked automatically by Claude Code via the MCP config.
 
 ## MCP Tools
 
-Once connected, Claude Code has access to these tools:
+Once connected, Claude Code has access to 18 tools organized into these categories:
+
+### Account Management
 
 | Tool | Description |
 |------|-------------|
 | `list_accounts` | List all connected Gmail/GCal accounts |
 | `get_account` | Get details for a specific account |
-| `search_emails` | Hybrid BM25 + vector search across emails |
-| `get_email` | Fetch single email by ID |
-| `get_thread` | Fetch all emails in a thread |
-| `list_folders` | List all IMAP folders |
-| `search_calendar` | Search calendar events |
+| `add_account` | Add a new Google account via OAuth (opens browser for authentication) |
+
+### Email Tools
+
+| Tool | Description |
+|------|-------------|
+| `search_emails` | Hybrid BM25 + vector search across emails with filters (folder, from, to, date range, attachments) |
+| `list_recent_emails` | List recent emails sorted by date (fast, no search overhead) |
+| `get_email` | Fetch single email by ID with full content |
+| `get_thread` | Fetch all emails in a Gmail thread |
+| `list_folders` | List all IMAP folders for accounts |
+
+### Calendar Tools
+
+| Tool | Description |
+|------|-------------|
+| `search_calendar` | Search calendar events with filters (date range, calendar) |
 | `get_event` | Fetch single calendar event by ID |
-| `list_calendars` | List all calendars |
-| `create_event` | Create a new calendar event |
-| `get_sync_status` | Get current sync status and statistics |
+| `list_calendars` | List all calendars for accounts |
+| `create_event` | Create a new calendar event with attendees, location, etc. |
+
+### Sync Management
+
+| Tool | Description |
+|------|-------------|
+| `get_sync_status` | Get current sync status, statistics, and live progress |
+| `reset_sync` | Clear all synced data for an account (keeps account connected) |
+| `extend_sync_range` | Extend sync to include older emails and events |
+
+### Daemon Management
+
+| Tool | Description |
+|------|-------------|
+| `start_daemon` | Start the background sync daemon (with optional logging) |
+| `stop_daemon` | Stop the running sync daemon |
+| `get_daemon_status` | Check if the sync daemon is running |
 
 ### Example queries in Claude Code
 
@@ -167,11 +196,20 @@ Once connected, Claude Code has access to these tools:
 Search my emails for "quarterly report"
 → Uses search_emails with hybrid BM25 + vector search
 
+Show me my recent emails
+→ Uses list_recent_emails (faster than search for just listing)
+
 What meetings do I have about the product launch?
 → Uses search_calendar
 
+Add my work Gmail account
+→ Uses add_account to start OAuth flow
+
 Show me the sync status
-→ Uses get_sync_status
+→ Uses get_sync_status (shows live progress during sync)
+
+Start syncing my email
+→ Uses start_daemon to begin background sync
 ```
 
 ## Configuration
