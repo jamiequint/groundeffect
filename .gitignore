@@ -28,8 +28,9 @@ data/
 *.lance/
 *.log
 
-# Model files (downloaded at runtime)
-models/
+# Model files (downloaded at runtime, in data directory)
+/models/
+**/data/models/
 
 # Build artifacts
 *.dSYM/
