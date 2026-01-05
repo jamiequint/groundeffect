@@ -154,7 +154,7 @@ Interactively change settings. Restarts the daemon if running via launchd.
 | Logging | Off | Write logs to `~/.local/share/groundeffect/logs/daemon.log` |
 | Email poll interval | 300s | How often to check for new emails (IMAP IDLE provides instant notifications regardless) |
 | Calendar poll interval | 300s | How often to sync calendar events |
-| Max concurrent fetches | 10 | Parallel email downloads during sync |
+| Max concurrent fetches | 10 | Concurrent IMAP connections for parallel downloads (Gmail limit: 15) |
 
 ### Uninstall launchd agent
 
