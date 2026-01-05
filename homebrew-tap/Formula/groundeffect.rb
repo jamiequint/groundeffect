@@ -1,16 +1,19 @@
 class Groundeffect < Formula
   desc "Hyper-fast, private email and calendar indexing for Claude Code"
   homepage "https://github.com/jamiequint/groundeffect"
-  url "https://github.com/jamiequint/groundeffect/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "ade6cb147722b31a4eaff2e0c87bcbded3bcb2a3e3cc71f7fd40be75a4b86f1c"
+  version "0.1.0"
   license "MIT"
 
-  depends_on "rust" => :build
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/jamiequint/groundeffect/releases/download/v0.1.0/groundeffect-0.1.0-darwin-arm64.tar.gz"
+      sha256 "a90e1d3c9aea896af4c35d21b93cc154820e1a64a13011781d27fccfb4c50631"
+    end
+  end
 
   def install
-    system "cargo", "build", "--release"
-    bin.install "target/release/groundeffect-daemon"
-    bin.install "target/release/groundeffect-mcp"
+    bin.install "groundeffect-daemon"
+    bin.install "groundeffect-mcp"
   end
 
   def caveats
@@ -49,14 +52,11 @@ class Groundeffect < Formula
     EOS
   end
 
-  # Runs BEFORE binaries are removed
   def uninstall_preflight
-    # Remove launchd agent if installed
     system "#{bin}/groundeffect-daemon", "setup", "--uninstall" rescue nil
   end
 
   def post_uninstall
-    # Clean up data directories (but not ~/.secrets or ~/.claude.json)
     rm_rf Dir.home + "/.config/groundeffect"
     rm_rf Dir.home + "/.local/share/groundeffect"
   end
