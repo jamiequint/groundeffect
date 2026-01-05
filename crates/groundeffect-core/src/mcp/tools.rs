@@ -46,7 +46,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "add_account".to_string(),
-            description: "Add a new Google account via OAuth. Opens a browser for authentication. The tool will wait up to 5 minutes for the OAuth callback.".to_string(),
+            description: "Add a new Google account via OAuth. IMPORTANT: Before calling this tool, ask the user how many years of email/calendar history they want to sync (1-20 years, or 'all' for everything). Opens a browser for authentication.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -56,7 +56,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "years_to_sync": {
                         "type": "string",
-                        "description": "How many years of email history to sync. Use '1'-'20' for specific years, or 'all' to sync entire history. Default: '1'",
+                        "description": "IMPORTANT: Ask the user before proceeding. How many years of email/calendar history to sync: '1'-'20' for specific years, or 'all' for entire history. More years = longer initial sync time.",
                         "default": "1"
                     }
                 }
