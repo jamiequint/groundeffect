@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use arrow_array::{
-    Array, ArrayRef, FixedSizeListArray, Float32Array, Int64Array, RecordBatch, StringArray,
-    UInt32Array, UInt64Array,
+    Array, ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Int64Array, RecordBatch,
+    StringArray, UInt32Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field, Schema};
 use chrono::{DateTime, Utc};
@@ -122,6 +122,7 @@ pub fn account_schema() -> Schema {
         Field::new("sync_email_since", DataType::Int64, true),
         Field::new("oldest_email_synced", DataType::Int64, true),
         Field::new("oldest_event_synced", DataType::Int64, true),
+        Field::new("sync_attachments", DataType::Boolean, false),
     ])
 }
 
@@ -161,6 +162,7 @@ pub fn empty_account_batch(schema: &Schema) -> RecordBatch {
         .map(|field| match field.data_type() {
             DataType::Utf8 => Arc::new(StringArray::from(Vec::<Option<&str>>::new())) as ArrayRef,
             DataType::Int64 => Arc::new(Int64Array::from(Vec::<i64>::new())) as ArrayRef,
+            DataType::Boolean => Arc::new(BooleanArray::from(Vec::<bool>::new())) as ArrayRef,
             _ => panic!("Unsupported type: {:?}", field.data_type()),
         })
         .collect();
@@ -702,6 +704,7 @@ pub fn account_to_batch(account: &Account) -> Result<RecordBatch> {
         Arc::new(Int64Array::from(vec![account
             .oldest_event_synced
             .map(|d| d.timestamp())])),
+        Arc::new(BooleanArray::from(vec![account.sync_attachments])),
     ];
 
     let batch = RecordBatch::try_new(Arc::new(schema), arrays)?;
@@ -753,6 +756,14 @@ pub fn batch_to_account_lenient(batch: &RecordBatch, row: usize) -> Result<Accou
             })
     };
 
+    let get_bool = |col: &str| -> bool {
+        batch
+            .column_by_name(col)
+            .and_then(|c| c.as_any().downcast_ref::<BooleanArray>())
+            .map(|a| a.value(row))
+            .unwrap_or(false)
+    };
+
     let status = match get_string("status").as_str() {
         "active" => AccountStatus::Active,
         "needs_reauth" => AccountStatus::NeedsReauth,
@@ -768,6 +779,8 @@ pub fn batch_to_account_lenient(batch: &RecordBatch, row: usize) -> Result<Accou
     let oldest_email_synced = get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
     // This column may not exist in old schema - defaults to None
     let oldest_event_synced = get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    // This column may not exist in old schema - defaults to false
+    let sync_attachments = get_bool("sync_attachments");
 
     Ok(Account {
         id: get_string("id"),
@@ -780,6 +793,7 @@ pub fn batch_to_account_lenient(batch: &RecordBatch, row: usize) -> Result<Accou
         sync_email_since,
         oldest_email_synced,
         oldest_event_synced,
+        sync_attachments,
     })
 }
 
@@ -827,6 +841,14 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
             })
     };
 
+    let get_bool = |col: &str| -> bool {
+        batch
+            .column_by_name(col)
+            .and_then(|c| c.as_any().downcast_ref::<BooleanArray>())
+            .map(|a| a.value(row))
+            .unwrap_or(false)
+    };
+
     let status = match get_string("status").as_str() {
         "active" => AccountStatus::Active,
         "needs_reauth" => AccountStatus::NeedsReauth,
@@ -842,6 +864,7 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
     let sync_email_since = get_opt_i64("sync_email_since").and_then(|ts| DateTime::from_timestamp(ts, 0));
     let oldest_email_synced = get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
     let oldest_event_synced = get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let sync_attachments = get_bool("sync_attachments");
 
     Ok(Account {
         id: get_string("id"),
@@ -854,5 +877,6 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
         sync_email_since,
         oldest_email_synced,
         oldest_event_synced,
+        sync_attachments,
     })
 }

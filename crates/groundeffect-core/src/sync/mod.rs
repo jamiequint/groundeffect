@@ -529,7 +529,9 @@ impl SyncManager {
             }
 
             // Persist last_sync_email and oldest_email_synced to database
+            let should_sync_attachments;
             if let Ok(Some(mut account)) = self.db.get_account(account_id).await {
+                should_sync_attachments = account.sync_attachments;
                 account.last_sync_email = Some(now);
                 // Update oldest_email_synced to track sync progress for resume
                 let (new_oldest, _) = self.db.get_email_sync_boundaries(account_id).await.unwrap_or((None, None));
@@ -538,6 +540,23 @@ impl SyncManager {
                 }
                 if let Err(e) = self.db.upsert_account(&account).await {
                     warn!("Failed to persist sync state: {}", e);
+                }
+            } else {
+                should_sync_attachments = false;
+            }
+
+            // Download attachments if enabled for this account
+            if should_sync_attachments {
+                info!("Downloading attachments for {} (sync_attachments enabled)", account_id);
+                match self.download_attachments_for_account(account_id).await {
+                    Ok((count, size)) => {
+                        if count > 0 {
+                            info!("Downloaded {} attachments ({} bytes) for {}", count, size, account_id);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to download attachments for {}: {}", account_id, e);
+                    }
                 }
             }
         } // End of email sync block
@@ -675,6 +694,77 @@ impl SyncManager {
         Ok(())
     }
 
+    /// Download attachments for emails that have them but haven't been downloaded yet
+    /// Returns (downloaded_count, total_size_bytes)
+    pub async fn download_attachments_for_account(&self, account_id: &str) -> Result<(usize, u64)> {
+        info!("Downloading attachments for {}", account_id);
+
+        let attachments_dir = self.config.attachments_dir();
+        std::fs::create_dir_all(&attachments_dir)?;
+
+        // Get emails with attachments that haven't been downloaded
+        let emails = self.db.get_emails_with_pending_attachments(account_id).await?;
+
+        if emails.is_empty() {
+            info!("No pending attachments to download for {}", account_id);
+            return Ok((0, 0));
+        }
+
+        info!("Found {} emails with pending attachments for {}", emails.len(), account_id);
+
+        let imap_client = ImapClient::new(
+            account_id,
+            self.oauth.clone(),
+            self.rate_limiter.clone(),
+        ).await?;
+
+        let mut total_downloaded = 0usize;
+        let mut total_size = 0u64;
+
+        for email in emails {
+            if email.attachments.is_empty() {
+                continue;
+            }
+
+            // Download all attachments for this email
+            match imap_client.download_all_attachments(email.uid, &attachments_dir).await {
+                Ok(downloaded) => {
+                    if downloaded.is_empty() {
+                        continue;
+                    }
+
+                    // Update email with downloaded attachment info
+                    let mut updated_email = email.clone();
+                    for (idx, att) in updated_email.attachments.iter_mut().enumerate() {
+                        // Match by index since we download in order
+                        if let Some((_, path, _, size)) = downloaded.get(idx) {
+                            att.local_path = Some(path.clone());
+                            att.downloaded = true;
+                            total_size += size;
+                        }
+                    }
+
+                    total_downloaded += downloaded.len();
+
+                    // Update email in database
+                    if let Err(e) = self.db.upsert_emails(&[updated_email]).await {
+                        warn!("Failed to update email with attachment paths: {}", e);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to download attachments for email {}: {}", email.id, e);
+                }
+            }
+        }
+
+        info!(
+            "Downloaded {} attachments ({} bytes) for {}",
+            total_downloaded, total_size, account_id
+        );
+
+        Ok((total_downloaded, total_size))
+    }
+
     /// Start IMAP IDLE for real-time email notifications
     pub async fn start_idle(&self, account_id: &str) -> Result<()> {
         if !self.config.sync.email_idle_enabled {
@@ -751,10 +841,21 @@ impl SyncManager {
                     if let Some(state) = self.account_states.write().get_mut(account_id) {
                         state.last_email_sync = Some(now);
                     }
+                    let should_sync_attachments;
                     if let Ok(Some(mut account)) = self.db.get_account(account_id).await {
+                        should_sync_attachments = account.sync_attachments;
                         account.last_sync_email = Some(now);
                         if let Err(e) = self.db.upsert_account(&account).await {
                             warn!("Failed to persist last_sync_email: {}", e);
+                        }
+                    } else {
+                        should_sync_attachments = false;
+                    }
+
+                    // Download attachments if enabled for this account
+                    if should_sync_attachments {
+                        if let Err(e) = self.download_attachments_for_account(account_id).await {
+                            warn!("Failed to download attachments during incremental sync: {}", e);
                         }
                     }
                 }

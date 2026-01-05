@@ -5,6 +5,7 @@ use std::sync::Arc;
 use async_imap::{Authenticator, Client as ImapClientAsync};
 use async_native_tls::TlsConnector;
 use chrono::{DateTime, Utc};
+use futures::StreamExt;
 use mail_parser::MimeHeaders;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -569,6 +570,200 @@ impl ImapClient {
         Ok(Some(email))
     }
 
+    /// Download a specific attachment from an email
+    /// Returns the attachment content as bytes
+    pub async fn download_attachment(
+        &self,
+        uid: u32,
+        attachment_filename: &str,
+    ) -> Result<(Vec<u8>, String)> {
+        info!(
+            "Downloading attachment '{}' from email UID {} for {}",
+            attachment_filename, uid, self.account_id
+        );
+
+        let mut session = self.connect_with_retry().await?;
+
+        // Select INBOX (or we could make folder configurable)
+        session
+            .select("INBOX")
+            .await
+            .map_err(|e| Error::Imap(format!("Failed to select INBOX: {:?}", e)))?;
+
+        // Fetch the full email body
+        let fetch_result = session
+            .uid_fetch(uid.to_string(), "BODY[]")
+            .await
+            .map_err(|e| Error::Imap(format!("Failed to fetch email UID {}: {:?}", uid, e)))?;
+
+        let fetches: Vec<_> = fetch_result.collect::<Vec<_>>().await;
+
+        if fetches.is_empty() {
+            return Err(Error::Imap(format!("Email UID {} not found", uid)));
+        }
+
+        let fetch = fetches
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::Imap(format!("No fetch result for UID {}", uid)))?
+            .map_err(|e| Error::Imap(format!("Fetch error: {:?}", e)))?;
+
+        let body = fetch
+            .body()
+            .ok_or_else(|| Error::Imap("No body in fetch".to_string()))?;
+
+        // Parse the email
+        let parsed = mail_parser::MessageParser::default()
+            .parse(body)
+            .ok_or_else(|| Error::Imap("Failed to parse email".to_string()))?;
+
+        // Find the attachment by filename
+        for att in parsed.attachments() {
+            let name = att.attachment_name().unwrap_or("attachment");
+            if name == attachment_filename {
+                let content = att.contents().to_vec();
+                let mime_type = att
+                    .content_type()
+                    .map(|ct| format!("{}/{}", ct.ctype(), ct.subtype().unwrap_or("octet-stream")))
+                    .unwrap_or_else(|| "application/octet-stream".to_string());
+
+                info!(
+                    "Downloaded attachment '{}' ({} bytes, {})",
+                    attachment_filename,
+                    content.len(),
+                    mime_type
+                );
+
+                let _ = session.logout().await;
+                return Ok((content, mime_type));
+            }
+        }
+
+        let _ = session.logout().await;
+        Err(Error::Imap(format!(
+            "Attachment '{}' not found in email UID {}",
+            attachment_filename, uid
+        )))
+    }
+
+    /// Download all attachments from an email and save to disk
+    /// Returns a list of (attachment_id, local_path) for successfully downloaded attachments
+    pub async fn download_all_attachments(
+        &self,
+        uid: u32,
+        attachments_dir: &std::path::Path,
+    ) -> Result<Vec<(String, std::path::PathBuf, String, u64)>> {
+        info!(
+            "Downloading all attachments from email UID {} for {}",
+            uid, self.account_id
+        );
+
+        let mut session = self.connect_with_retry().await?;
+
+        // Select INBOX
+        session
+            .select("INBOX")
+            .await
+            .map_err(|e| Error::Imap(format!("Failed to select INBOX: {:?}", e)))?;
+
+        // Fetch the full email body
+        let fetch_result = session
+            .uid_fetch(uid.to_string(), "BODY[]")
+            .await
+            .map_err(|e| Error::Imap(format!("Failed to fetch email UID {}: {:?}", uid, e)))?;
+
+        let fetches: Vec<_> = fetch_result.collect::<Vec<_>>().await;
+
+        if fetches.is_empty() {
+            let _ = session.logout().await;
+            return Ok(vec![]);
+        }
+
+        let fetch = match fetches.into_iter().next() {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => {
+                let _ = session.logout().await;
+                return Err(Error::Imap(format!("Fetch error: {:?}", e)));
+            }
+            None => {
+                let _ = session.logout().await;
+                return Ok(vec![]);
+            }
+        };
+
+        let body = match fetch.body() {
+            Some(b) => b,
+            None => {
+                let _ = session.logout().await;
+                return Ok(vec![]);
+            }
+        };
+
+        // Parse the email
+        let parsed = match mail_parser::MessageParser::default().parse(body) {
+            Some(p) => p,
+            None => {
+                let _ = session.logout().await;
+                return Ok(vec![]);
+            }
+        };
+
+        let mut downloaded = Vec::new();
+
+        // Create account-specific subdirectory
+        let account_dir = attachments_dir.join(&self.account_id);
+        std::fs::create_dir_all(&account_dir)?;
+
+        // Download each attachment
+        for att in parsed.attachments() {
+            let filename = att.attachment_name().unwrap_or("attachment").to_string();
+            let content = att.contents();
+            let size = content.len() as u64;
+
+            // Skip large attachments (50MB limit)
+            if size > 50 * 1024 * 1024 {
+                warn!(
+                    "Skipping attachment '{}' ({} bytes) - exceeds 50MB limit",
+                    filename, size
+                );
+                continue;
+            }
+
+            let mime_type = att
+                .content_type()
+                .map(|ct| format!("{}/{}", ct.ctype(), ct.subtype().unwrap_or("octet-stream")))
+                .unwrap_or_else(|| "application/octet-stream".to_string());
+
+            // Generate unique filename to avoid collisions
+            let unique_id = uuid::Uuid::new_v4().to_string();
+            let safe_filename = sanitize_filename(&filename);
+            let local_filename = format!("{}_{}", &unique_id[..8], safe_filename);
+            let local_path = account_dir.join(&local_filename);
+
+            // Write to disk
+            if let Err(e) = std::fs::write(&local_path, content) {
+                error!("Failed to write attachment '{}': {}", filename, e);
+                continue;
+            }
+
+            debug!(
+                "Saved attachment '{}' to {:?} ({} bytes)",
+                filename, local_path, size
+            );
+
+            downloaded.push((unique_id, local_path, mime_type, size));
+        }
+
+        let _ = session.logout().await;
+        info!(
+            "Downloaded {} attachments from email UID {}",
+            downloaded.len(),
+            uid
+        );
+
+        Ok(downloaded)
+    }
+
     /// Start IMAP IDLE for real-time notifications
     pub async fn start_idle(&self, event_tx: mpsc::Sender<SyncEvent>) -> Result<()> {
         loop {
@@ -621,4 +816,17 @@ impl ImapClient {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }
+}
+
+/// Sanitize a filename to be safe for the filesystem
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string()
 }

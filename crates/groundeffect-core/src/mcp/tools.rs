@@ -59,6 +59,10 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "items": {"type": "string"},
                         "description": "For 'configure': folders to sync (empty array = all folders)"
                     },
+                    "sync_attachments": {
+                        "type": "boolean",
+                        "description": "For 'configure': enable/disable automatic attachment download during sync (off by default, requires daemon restart)"
+                    },
                     "confirm": {
                         "type": "boolean",
                         "description": "For 'delete': must be true to confirm deletion"
@@ -350,14 +354,14 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         // System tools
         ToolDefinition {
             name: "manage_sync".to_string(),
-            description: "Manage sync. Actions: 'status' (show sync status - omit account for all accounts), 'reset' (clear synced data), 'extend' (sync older data), 'resume_from' (force resume from date).".to_string(),
+            description: "Manage sync. Actions: 'status' (show sync status), 'reset' (clear synced data), 'extend' (sync older data), 'resume_from' (force resume from date), 'download_attachments' (download pending attachments).".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["status", "reset", "extend", "resume_from"],
-                        "description": "Action: 'status' (show sync info - omit account for all), 'reset' (clear data), 'extend' (sync older data), 'resume_from' (force sync from date)"
+                        "enum": ["status", "reset", "extend", "resume_from", "download_attachments"],
+                        "description": "Action: 'status' (show sync info), 'reset' (clear data), 'extend' (sync older data), 'resume_from' (force sync from date), 'download_attachments' (retroactively download attachments for existing emails)"
                     },
                     "account": {
                         "type": "string",
@@ -559,6 +563,14 @@ impl ToolHandler {
             }
         }
 
+        // Update sync_attachments if provided
+        if let Some(sync_attachments) = args.get("sync_attachments").and_then(|v| v.as_bool()) {
+            if account.sync_attachments != sync_attachments {
+                account.sync_attachments = sync_attachments;
+                changes.push(format!("sync_attachments: {} (restart daemon to apply)", sync_attachments));
+            }
+        }
+
         // Save account changes to DB
         if !changes.is_empty() {
             self.db.upsert_account(&account).await?;
@@ -597,7 +609,8 @@ impl ToolHandler {
                 "message": "No changes specified",
                 "account": {
                     "id": account.id,
-                    "alias": account.alias
+                    "alias": account.alias,
+                    "sync_attachments": account.sync_attachments
                 }
             }));
         }
@@ -608,9 +621,10 @@ impl ToolHandler {
             "changes": changes,
             "account": {
                 "id": account.id,
-                "alias": account.alias
+                "alias": account.alias,
+                "sync_attachments": account.sync_attachments
             },
-            "note": "Restart the daemon for sync_email/sync_calendar/folders changes to take effect"
+            "note": "Restart the daemon for sync_email/sync_calendar/folders/sync_attachments changes to take effect"
         }))
     }
 
@@ -623,7 +637,8 @@ impl ToolHandler {
                 "alias": a.alias,
                 "display_name": a.display_name,
                 "status": format!("{:?}", a.status).to_lowercase(),
-                "added_at": a.added_at.to_rfc3339()
+                "added_at": a.added_at.to_rfc3339(),
+                "sync_attachments": a.sync_attachments
             })).collect::<Vec<_>>()
         }))
     }
@@ -743,6 +758,7 @@ impl ToolHandler {
                 sync_email_since: sync_since,
                 oldest_email_synced: None,
                 oldest_event_synced: None,
+                sync_attachments: false,  // Off by default
             };
             self.db.upsert_account(&account).await?;
 
@@ -1611,7 +1627,7 @@ Content-Type: text/html; charset=utf-8
                     self.sync_status_all().await
                 }
             }
-            "reset" | "extend" | "resume_from" => {
+            "reset" | "extend" | "resume_from" | "download_attachments" => {
                 // These actions require an account
                 let id = account_id
                     .ok_or_else(|| Error::InvalidRequest(format!("Action '{}' requires an account", action)))?;
@@ -1624,11 +1640,12 @@ Content-Type: text/html; charset=utf-8
                     "reset" => self.sync_reset(&email, args).await,
                     "extend" => self.sync_extend(&email, args).await,
                     "resume_from" => self.sync_resume_from(&email, args).await,
+                    "download_attachments" => self.sync_download_attachments(&email).await,
                     _ => unreachable!(),
                 }
             }
             _ => Err(Error::InvalidRequest(format!(
-                "Unknown action '{}'. Use: status, reset, extend, resume_from",
+                "Unknown action '{}'. Use: status, reset, extend, resume_from, download_attachments",
                 action
             ))),
         }
@@ -1651,6 +1668,10 @@ Content-Type: text/html; charset=utf-8
         let email_count = self.db.count_emails(Some(email)).await?;
         let event_count = self.db.count_events(Some(email)).await?;
 
+        // Get attachment stats
+        let (total_attachments, downloaded_attachments, attachment_size) =
+            self.db.get_attachment_stats(email).await.unwrap_or((0, 0, 0));
+
         Ok(serde_json::json!({
             "account": email,
             "sync_status": {
@@ -1660,14 +1681,24 @@ Content-Type: text/html; charset=utf-8
                 "last_sync_email": account.last_sync_email.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
                 "last_sync_calendar": account.last_sync_calendar.map(|d| d.format("%Y-%m-%d %H:%M").to_string()),
                 "email_count": email_count,
-                "event_count": event_count
+                "event_count": event_count,
+                "sync_attachments_enabled": account.sync_attachments,
+                "attachments": {
+                    "total": total_attachments,
+                    "downloaded": downloaded_attachments,
+                    "pending": total_attachments - downloaded_attachments,
+                    "total_size_bytes": attachment_size,
+                    "total_size_human": format_bytes(attachment_size)
+                }
             },
             "message": format!(
-                "{} emails{}, {} calendar events{}",
+                "{} emails{}, {} calendar events{}, {} attachments ({} downloaded)",
                 email_count,
                 oldest_email_synced.map(|d| format!(" (back to {})", d.format("%Y-%m-%d"))).unwrap_or_default(),
                 event_count,
-                oldest_event_synced.map(|d| format!(" (back to {})", d.format("%Y-%m-%d"))).unwrap_or_default()
+                oldest_event_synced.map(|d| format!(" (back to {})", d.format("%Y-%m-%d"))).unwrap_or_default(),
+                total_attachments,
+                downloaded_attachments
             )
         }))
     }
@@ -1843,6 +1874,63 @@ Content-Type: text/html; charset=utf-8
             ),
             "next_steps": "Use manage_daemon with action: 'restart' to apply changes"
         }))
+    }
+
+    /// Download attachments for emails that have them but haven't been downloaded yet
+    /// For large batches, enables sync_attachments and lets the daemon handle it in background
+    async fn sync_download_attachments(&self, email: &str) -> Result<Value> {
+        info!("Checking pending attachments for {}", email);
+
+        // Get attachment stats
+        let (total_attachments, downloaded_attachments, _) =
+            self.db.get_attachment_stats(email).await.unwrap_or((0, 0, 0));
+        let pending_count = total_attachments - downloaded_attachments;
+
+        if pending_count == 0 {
+            return Ok(serde_json::json!({
+                "success": true,
+                "account": email,
+                "pending_count": 0,
+                "message": "No pending attachments to download"
+            }));
+        }
+
+        // Get account to check/update sync_attachments setting
+        let account = self
+            .db
+            .get_account(email)
+            .await?
+            .ok_or_else(|| Error::AccountNotFound(email.to_string()))?;
+
+        // For any pending attachments, enable sync_attachments so daemon handles it
+        if !account.sync_attachments {
+            let mut updated_account = account.clone();
+            updated_account.sync_attachments = true;
+            self.db.upsert_account(&updated_account).await?;
+
+            Ok(serde_json::json!({
+                "success": true,
+                "account": email,
+                "pending_count": pending_count,
+                "sync_attachments_enabled": true,
+                "message": format!(
+                    "Found {} pending attachments. Enabled sync_attachments - daemon will download in background. Restart daemon if not running.",
+                    pending_count
+                )
+            }))
+        } else {
+            // Already enabled, daemon will handle it
+            Ok(serde_json::json!({
+                "success": true,
+                "account": email,
+                "pending_count": pending_count,
+                "sync_attachments_enabled": true,
+                "message": format!(
+                    "Found {} pending attachments. sync_attachments already enabled - daemon will download in background.",
+                    pending_count
+                )
+            }))
+        }
     }
 
     /// Get the path to the daemon binary (sibling of current executable)
@@ -2144,5 +2232,22 @@ Content-Type: text/html; charset=utf-8
                 }))
             }
         }
+    }
+}
+
+/// Format bytes as human-readable string
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} bytes", bytes)
     }
 }

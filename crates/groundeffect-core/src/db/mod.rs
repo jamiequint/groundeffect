@@ -315,9 +315,11 @@ impl Database {
     /// FTS indexes in LanceDB are not automatically updated when data is added,
     /// so this should be called after sync batches complete.
     pub async fn rebuild_fts_indexes(&self) -> Result<()> {
+        info!("Rebuilding FTS indexes...");
+        let start = std::time::Instant::now();
+
         // Rebuild emails FTS indexes
         if let Ok(table) = self.emails_table() {
-            debug!("Rebuilding FTS indexes on emails table...");
             // create_index replaces existing index
             if let Err(e) = table
                 .create_index(&["subject"], Index::FTS(FtsIndexBuilder::default()))
@@ -337,7 +339,6 @@ impl Database {
 
         // Rebuild events FTS indexes
         if let Ok(table) = self.events_table() {
-            debug!("Rebuilding FTS indexes on events table...");
             if let Err(e) = table
                 .create_index(&["summary"], Index::FTS(FtsIndexBuilder::default()))
                 .execute()
@@ -354,7 +355,7 @@ impl Database {
             }
         }
 
-        debug!("FTS index rebuild complete");
+        info!("FTS index rebuild complete in {:?}", start.elapsed());
         Ok(())
     }
 
@@ -584,6 +585,78 @@ impl Database {
         emails.sort_by(|a, b| a.date.cmp(&b.date));
 
         Ok(emails)
+    }
+
+    /// Get emails that have attachments but haven't been downloaded yet
+    pub async fn get_emails_with_pending_attachments(&self, account_id: &str) -> Result<Vec<Email>> {
+        let table = self.emails_table()?;
+
+        // Query emails with non-empty attachments
+        // We filter for emails that have attachments JSON and check in Rust if downloaded
+        let filter = format!(
+            "account_id = '{}' AND attachments IS NOT NULL",
+            account_id
+        );
+
+        let results = table
+            .query()
+            .only_if(&filter)
+            .execute()
+            .await?;
+
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut pending_emails = Vec::new();
+        for batch in &batches {
+            for i in 0..batch.num_rows() {
+                let email = batch_to_email(batch, i)?;
+                // Check if any attachment hasn't been downloaded
+                let has_pending = email.attachments.iter().any(|att| !att.downloaded);
+                if has_pending && !email.attachments.is_empty() {
+                    pending_emails.push(email);
+                }
+            }
+        }
+
+        Ok(pending_emails)
+    }
+
+    /// Get attachment statistics for an account
+    /// Returns (total_attachments, downloaded_attachments, total_size_bytes)
+    pub async fn get_attachment_stats(&self, account_id: &str) -> Result<(usize, usize, u64)> {
+        let table = self.emails_table()?;
+
+        let filter = format!(
+            "account_id = '{}' AND attachments IS NOT NULL",
+            account_id
+        );
+
+        let results = table
+            .query()
+            .only_if(&filter)
+            .execute()
+            .await?;
+
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut total = 0usize;
+        let mut downloaded = 0usize;
+        let mut total_size = 0u64;
+
+        for batch in &batches {
+            for i in 0..batch.num_rows() {
+                let email = batch_to_email(batch, i)?;
+                for att in &email.attachments {
+                    total += 1;
+                    if att.downloaded {
+                        downloaded += 1;
+                        total_size += att.size as u64;
+                    }
+                }
+            }
+        }
+
+        Ok((total, downloaded, total_size))
     }
 
     /// Get an account by ID (email address)
