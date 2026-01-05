@@ -987,9 +987,9 @@ impl Database {
         // Select all columns except the embedding vector for speed
         let columns = &[
             "id", "account_id", "message_id", "gmail_thread_id", "folder",
-            "subject", "from_email", "from_name", "to_list", "cc_list", "bcc_list",
-            "date", "body_plain", "body_html", "snippet", "has_attachments",
-            "attachment_count", "labels", "is_read", "is_starred", "raw_headers",
+            "subject", "from_email", "from_name", "to", "cc", "bcc",
+            "date", "body_plain", "body_html", "snippet", "attachments",
+            "labels", "flags", "uid",
         ];
 
         let mut query = table
