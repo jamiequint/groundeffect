@@ -1535,13 +1535,21 @@ Content-Type: text/html; charset=utf-8
         let mut account_stats = Vec::new();
         let mut total_emails = 0u64;
         let mut total_events = 0u64;
+        let mut total_attachments = 0usize;
+        let mut total_downloaded = 0usize;
+        let mut total_attachment_size = 0u64;
 
         for account in &accounts {
             let email_count = self.db.count_emails(Some(&account.id)).await?;
             let event_count = self.db.count_events(Some(&account.id)).await?;
+            let (att_total, att_downloaded, att_size) =
+                self.db.get_attachment_stats(&account.id).await.unwrap_or((0, 0, 0));
 
             total_emails += email_count;
             total_events += event_count;
+            total_attachments += att_total;
+            total_downloaded += att_downloaded;
+            total_attachment_size += att_size;
 
             // Check for live progress from daemon
             let live_progress = sync_progress
@@ -1585,7 +1593,12 @@ Content-Type: text/html; charset=utf-8
                 "last_calendar_sync": account.last_sync_calendar.map(format_local_time),
                 "email_count": email_count,
                 "event_count": event_count,
-                "attachment_count": 0, // TODO
+                "sync_attachments_enabled": account.sync_attachments,
+                "attachments": {
+                    "total": att_total,
+                    "downloaded": att_downloaded,
+                    "pending": att_total - att_downloaded
+                },
                 "is_syncing": is_syncing,
                 "sync_progress": sync_progress_json
             });
@@ -1598,9 +1611,13 @@ Content-Type: text/html; charset=utf-8
             "totals": {
                 "email_count": total_emails,
                 "event_count": total_events,
-                "attachment_count": 0,
-                "index_size_mb": 0.0,
-                "attachment_storage_mb": 0.0
+                "attachments": {
+                    "total": total_attachments,
+                    "downloaded": total_downloaded,
+                    "pending": total_attachments - total_downloaded,
+                    "storage_bytes": total_attachment_size,
+                    "storage_human": format_bytes(total_attachment_size)
+                }
             }
         }))
     }
