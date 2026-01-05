@@ -13,6 +13,7 @@ use arrow_array::{
     UInt32Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field, Schema};
+use chrono::{DateTime, Utc};
 use lancedb::index::scalar::FtsIndexBuilder;
 use lancedb::index::Index;
 use lancedb::query::{ExecutableQuery, QueryBase};
@@ -449,6 +450,104 @@ impl Database {
         let batches: Vec<RecordBatch> = results.try_collect().await?;
         let count: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
         Ok(count)
+    }
+
+    /// Get the oldest email date for an account (for resume logic)
+    pub async fn get_oldest_email_date(&self, account_id: &str) -> Result<Option<DateTime<Utc>>> {
+        let table = self.emails_table()?;
+
+        let query = table
+            .query()
+            .select(lancedb::query::Select::columns(&["date"]))
+            .only_if(&format!("account_id = '{}'", account_id));
+
+        let results = query.execute().await?;
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut oldest: Option<DateTime<Utc>> = None;
+        for batch in &batches {
+            if let Some(date_col) = batch.column_by_name("date")
+                .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+            {
+                for i in 0..batch.num_rows() {
+                    if let Some(ts) = DateTime::from_timestamp(date_col.value(i), 0) {
+                        oldest = Some(match oldest {
+                            Some(current) if ts < current => ts,
+                            Some(current) => current,
+                            None => ts,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(oldest)
+    }
+
+    /// Get existing message_ids for an account (for deduplication during resume)
+    pub async fn get_email_message_ids(&self, account_id: &str) -> Result<std::collections::HashSet<String>> {
+        let table = self.emails_table()?;
+
+        let query = table
+            .query()
+            .select(lancedb::query::Select::columns(&["message_id"]))
+            .only_if(&format!("account_id = '{}'", account_id));
+
+        let results = query.execute().await?;
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut message_ids = std::collections::HashSet::new();
+        for batch in &batches {
+            if let Some(msg_id_col) = batch.column_by_name("message_id")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            {
+                for i in 0..batch.num_rows() {
+                    message_ids.insert(msg_id_col.value(i).to_string());
+                }
+            }
+        }
+
+        debug!("Loaded {} existing message_ids for {}", message_ids.len(), account_id);
+        Ok(message_ids)
+    }
+
+    /// Get email sync boundaries for resume (oldest and newest dates)
+    pub async fn get_email_sync_boundaries(&self, account_id: &str) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
+        let table = self.emails_table()?;
+
+        let query = table
+            .query()
+            .select(lancedb::query::Select::columns(&["date"]))
+            .only_if(&format!("account_id = '{}'", account_id));
+
+        let results = query.execute().await?;
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut oldest: Option<DateTime<Utc>> = None;
+        let mut newest: Option<DateTime<Utc>> = None;
+
+        for batch in &batches {
+            if let Some(date_col) = batch.column_by_name("date")
+                .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+            {
+                for i in 0..batch.num_rows() {
+                    if let Some(ts) = DateTime::from_timestamp(date_col.value(i), 0) {
+                        oldest = Some(match oldest {
+                            Some(current) if ts < current => ts,
+                            Some(current) => current,
+                            None => ts,
+                        });
+                        newest = Some(match newest {
+                            Some(current) if ts > current => ts,
+                            Some(current) => current,
+                            None => ts,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok((oldest, newest))
     }
 
     /// List recent emails sorted by date (newest first)

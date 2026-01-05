@@ -219,163 +219,232 @@ impl SyncManager {
         Ok(())
     }
 
-    /// Run initial sync for an account (smart sync strategy - newest first)
+    /// Run initial sync for an account (smart sync strategy - newest first, with resume support)
     pub async fn initial_sync(&self, account_id: &str) -> Result<()> {
         info!("Starting initial sync for {}", account_id);
-
-        let imap_client = ImapClient::new(
-            account_id,
-            self.oauth.clone(),
-            self.rate_limiter.clone(),
-        ).await?;
-
-        // Phase 0: Count emails to get progress estimate
-        {
-            let mut states = self.account_states.write();
-            if let Some(state) = states.get_mut(account_id) {
-                state.initial_sync_progress = Some(InitialSyncProgress {
-                    total_emails_estimated: 0,
-                    emails_synced: 0,
-                    total_events_estimated: 0,
-                    events_synced: 0,
-                    started_at: Utc::now(),
-                    phase: SyncPhase::Counting,
-                    emails_per_second: 0.0,
-                });
-            }
-        }
-
-        // Count total emails in INBOX (for progress estimation)
-        let total_emails = imap_client.count_emails().await.unwrap_or(0);
-        info!("Account {} has approximately {} emails in INBOX", account_id, total_emails);
-
-        // Update progress with count
-        {
-            let mut states = self.account_states.write();
-            if let Some(state) = states.get_mut(account_id) {
-                if let Some(ref mut progress) = state.initial_sync_progress {
-                    progress.total_emails_estimated = total_emails;
-                    progress.phase = SyncPhase::RecentEmails;
-                }
-            }
-        }
-
-        // Phase 1: Sync recent emails - NEWEST FIRST (single IMAP connection)
-        self.emit_event(SyncEvent::SyncStarted {
-            account_id: account_id.to_string(),
-            sync_type: SyncType::Email,
-        }).await;
 
         // Get account's sync_email_since preference, default to 90 days
         let account = self.db.get_account(account_id).await?
             .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
-        let since = account.sync_email_since.unwrap_or_else(|| Utc::now() - Duration::days(90));
-        let batch_size = 50; // Fetch in batches for progress tracking
-        let sync_start = std::time::Instant::now();
+        let target_since = account.sync_email_since.unwrap_or_else(|| Utc::now() - Duration::days(90));
 
-        // State for progress tracking (shared with callback)
-        let total_synced = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let total_synced_clone = total_synced.clone();
-        let account_states_clone = self.account_states.clone();
-        let account_id_owned = account_id.to_string();
-        let db_clone = self.db.clone();
-        let embedding_clone = self.embedding.clone();
+        // Check for existing emails to enable resume
+        let (oldest_synced, _newest_synced) = self.db.get_email_sync_boundaries(account_id).await?;
+        let existing_count = self.db.count_emails(Some(account_id)).await?;
 
-        // Use single connection to fetch all emails
-        let result = imap_client.fetch_all_emails_since(since, batch_size, |emails| {
-            let total_synced = total_synced_clone.clone();
-            let account_states = account_states_clone.clone();
-            let account_id = account_id_owned.clone();
-            let db = db_clone.clone();
-            let embedding = embedding_clone.clone();
-            let sync_start = sync_start.clone();
+        // Determine if we need to resume and from where
+        let (resume_mode, sync_since) = match oldest_synced {
+            Some(oldest) if oldest <= target_since => {
+                // We've already synced back to the target - just need incremental
+                info!("Account {} already synced to target date, skipping to calendar", account_id);
+                (false, oldest) // No email sync needed
+            }
+            Some(oldest) => {
+                // Resume from where we left off (with 1 day buffer for safety)
+                let resume_from = oldest - Duration::days(1);
+                info!(
+                    "Resuming sync for {} from {} (had {} emails, syncing back to {})",
+                    account_id,
+                    resume_from.format("%Y-%m-%d"),
+                    existing_count,
+                    target_since.format("%Y-%m-%d")
+                );
+                (true, resume_from)
+            }
+            None => {
+                // Fresh sync - start from now
+                info!("Fresh sync for {} back to {}", account_id, target_since.format("%Y-%m-%d"));
+                (false, Utc::now())
+            }
+        };
 
-            async move {
-                let batch_count = emails.len();
+        // Skip email sync if already complete
+        if oldest_synced.is_some() && oldest_synced.unwrap() <= target_since {
+            info!("Email sync already complete for {}, proceeding to calendar", account_id);
+        } else {
+            // Load existing message_ids for deduplication
+            let existing_message_ids = std::sync::Arc::new(
+                self.db.get_email_message_ids(account_id).await.unwrap_or_default()
+            );
+            info!("Loaded {} existing message_ids for deduplication", existing_message_ids.len());
 
-                // Generate embeddings in batches for performance
-                const EMBED_BATCH_SIZE: usize = 128;
-                for embed_chunk in emails.chunks(EMBED_BATCH_SIZE) {
-                    let texts: Vec<String> = embed_chunk.iter().map(|e| e.searchable_text()).collect();
-                    let embeddings = embedding.embed_batch(&texts)?;
+            let imap_client = ImapClient::new(
+                account_id,
+                self.oauth.clone(),
+                self.rate_limiter.clone(),
+            ).await?;
 
-                    let emails_with_embeddings: Vec<Email> = embed_chunk
-                        .iter()
-                        .zip(embeddings.into_iter())
-                        .map(|(email, embedding)| {
-                            let mut email = email.clone();
-                            email.embedding = Some(embedding);
-                            email
-                        })
-                        .collect();
-
-                    db.upsert_emails(&emails_with_embeddings).await?;
+            // Phase 0: Count emails to get progress estimate
+            {
+                let mut states = self.account_states.write();
+                if let Some(state) = states.get_mut(account_id) {
+                    state.initial_sync_progress = Some(InitialSyncProgress {
+                        total_emails_estimated: 0,
+                        emails_synced: existing_count,
+                        total_events_estimated: 0,
+                        events_synced: 0,
+                        started_at: Utc::now(),
+                        phase: if resume_mode { SyncPhase::Backfill } else { SyncPhase::Counting },
+                        emails_per_second: 0.0,
+                    });
                 }
+            }
 
-                let prev = total_synced.fetch_add(batch_count, std::sync::atomic::Ordering::SeqCst);
-                let new_total = prev + batch_count;
-                info!("Embedded and stored {} emails (total: {}) for {}", batch_count, new_total, account_id);
+            // Count total emails in INBOX (for progress estimation)
+            let total_emails = imap_client.count_emails().await.unwrap_or(0);
+            info!("Account {} has approximately {} emails in INBOX", account_id, total_emails);
 
-                // Update progress
-                {
-                    let elapsed = sync_start.elapsed().as_secs_f64();
-                    let mut states = account_states.write();
-                    if let Some(state) = states.get_mut(&account_id) {
-                        state.email_count = new_total as u64;
-                        if let Some(ref mut progress) = state.initial_sync_progress {
-                            progress.emails_synced = new_total as u64;
-                            progress.emails_per_second = if elapsed > 0.0 {
-                                new_total as f64 / elapsed
-                            } else {
-                                0.0
-                            };
-                        }
+            // Update progress with count
+            {
+                let mut states = self.account_states.write();
+                if let Some(state) = states.get_mut(account_id) {
+                    if let Some(ref mut progress) = state.initial_sync_progress {
+                        progress.total_emails_estimated = total_emails;
+                        progress.phase = SyncPhase::RecentEmails;
                     }
                 }
-
-                Ok(())
             }
-        }).await;
 
-        // Handle any error from the fetch operation
-        if let Err(e) = result {
-            error!("Error during email fetch for {}: {}", account_id, e);
-            return Err(e);
-        }
+            // Phase 1: Sync emails (either fresh or resuming)
+            self.emit_event(SyncEvent::SyncStarted {
+                account_id: account_id.to_string(),
+                sync_type: SyncType::Email,
+            }).await;
 
-        let total_synced = total_synced.load(std::sync::atomic::Ordering::SeqCst);
+            let batch_size = 50; // Fetch in batches for progress tracking
+            let sync_start = std::time::Instant::now();
 
-        // Write progress file for MCP to read
-        self.write_progress_file();
+            // State for progress tracking (shared with callback)
+            let total_synced = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(existing_count as usize));
+            let total_new = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let total_synced_clone = total_synced.clone();
+            let total_new_clone = total_new.clone();
+            let account_states_clone = self.account_states.clone();
+            let account_id_owned = account_id.to_string();
+            let db_clone = self.db.clone();
+            let embedding_clone = self.embedding.clone();
+            let existing_ids_clone = existing_message_ids.clone();
+            let target_since_clone = target_since;
 
-        info!("Email sync complete for {} - {} emails embedded and stored", account_id, total_synced);
+            // Use single connection to fetch all emails since target date
+            let result = imap_client.fetch_all_emails_since(target_since, batch_size, |emails| {
+                let total_synced = total_synced_clone.clone();
+                let total_new = total_new_clone.clone();
+                let account_states = account_states_clone.clone();
+                let account_id = account_id_owned.clone();
+                let db = db_clone.clone();
+                let embedding = embedding_clone.clone();
+                let sync_start = sync_start.clone();
+                let existing_ids = existing_ids_clone.clone();
 
-        self.emit_event(SyncEvent::SyncCompleted {
-            account_id: account_id.to_string(),
-            sync_type: SyncType::Email,
-            count: total_synced,
-        }).await;
+                async move {
+                    // Filter out emails we already have (by message_id)
+                    let new_emails: Vec<_> = emails
+                        .into_iter()
+                        .filter(|e| !existing_ids.contains(&e.message_id))
+                        .collect();
 
-        // Update state and persist to database
-        let now = Utc::now();
-        {
-            let mut states = self.account_states.write();
-            if let Some(state) = states.get_mut(account_id) {
-                state.last_email_sync = Some(now);
-                state.is_syncing = false;
-                if let Some(ref mut progress) = state.initial_sync_progress {
-                    progress.phase = SyncPhase::Calendar;
+                    if new_emails.is_empty() {
+                        debug!("Batch contained only already-synced emails, skipping");
+                        return Ok(());
+                    }
+
+                    let batch_count = new_emails.len();
+
+                    // Generate embeddings in batches for performance
+                    const EMBED_BATCH_SIZE: usize = 128;
+                    for embed_chunk in new_emails.chunks(EMBED_BATCH_SIZE) {
+                        let texts: Vec<String> = embed_chunk.iter().map(|e| e.searchable_text()).collect();
+                        let embeddings = embedding.embed_batch(&texts)?;
+
+                        let emails_with_embeddings: Vec<Email> = embed_chunk
+                            .iter()
+                            .zip(embeddings.into_iter())
+                            .map(|(email, embedding)| {
+                                let mut email = email.clone();
+                                email.embedding = Some(embedding);
+                                email
+                            })
+                            .collect();
+
+                        db.upsert_emails(&emails_with_embeddings).await?;
+                    }
+
+                    let prev = total_synced.fetch_add(batch_count, std::sync::atomic::Ordering::SeqCst);
+                    let new_total = prev + batch_count;
+                    total_new.fetch_add(batch_count, std::sync::atomic::Ordering::SeqCst);
+                    info!("Embedded and stored {} new emails (total: {}) for {}", batch_count, new_total, account_id);
+
+                    // Update progress
+                    {
+                        let elapsed = sync_start.elapsed().as_secs_f64();
+                        let mut states = account_states.write();
+                        if let Some(state) = states.get_mut(&account_id) {
+                            state.email_count = new_total as u64;
+                            if let Some(ref mut progress) = state.initial_sync_progress {
+                                progress.emails_synced = new_total as u64;
+                                progress.emails_per_second = if elapsed > 0.0 {
+                                    new_total as f64 / elapsed
+                                } else {
+                                    0.0
+                                };
+                            }
+                        }
+                    }
+
+                    Ok(())
+                }
+            }).await;
+
+            // Handle any error from the fetch operation
+            if let Err(e) = result {
+                error!("Error during email fetch for {}: {}", account_id, e);
+                return Err(e);
+            }
+
+            let total_synced_count = total_synced.load(std::sync::atomic::Ordering::SeqCst);
+            let new_emails_count = total_new.load(std::sync::atomic::Ordering::SeqCst);
+
+            // Write progress file for MCP to read
+            self.write_progress_file();
+
+            info!(
+                "Email sync complete for {} - {} new emails embedded (total: {})",
+                account_id, new_emails_count, total_synced_count
+            );
+
+            self.emit_event(SyncEvent::SyncCompleted {
+                account_id: account_id.to_string(),
+                sync_type: SyncType::Email,
+                count: new_emails_count,
+            }).await;
+
+            // Update state and persist to database
+            let now = Utc::now();
+            {
+                let mut states = self.account_states.write();
+                if let Some(state) = states.get_mut(account_id) {
+                    state.last_email_sync = Some(now);
+                    state.is_syncing = false;
+                    if let Some(ref mut progress) = state.initial_sync_progress {
+                        progress.phase = SyncPhase::Calendar;
+                    }
                 }
             }
-        }
 
-        // Persist last_sync_email to database
-        if let Ok(Some(mut account)) = self.db.get_account(account_id).await {
-            account.last_sync_email = Some(now);
-            if let Err(e) = self.db.upsert_account(&account).await {
-                warn!("Failed to persist last_sync_email: {}", e);
+            // Persist last_sync_email and oldest_email_synced to database
+            if let Ok(Some(mut account)) = self.db.get_account(account_id).await {
+                account.last_sync_email = Some(now);
+                // Update oldest_email_synced to track sync progress for resume
+                let (new_oldest, _) = self.db.get_email_sync_boundaries(account_id).await.unwrap_or((None, None));
+                if new_oldest.is_some() {
+                    account.oldest_email_synced = new_oldest;
+                }
+                if let Err(e) = self.db.upsert_account(&account).await {
+                    warn!("Failed to persist sync state: {}", e);
+                }
             }
-        }
+        } // End of email sync block
 
         // Phase 2: Start calendar sync
         self.sync_calendar(account_id).await?;
