@@ -326,6 +326,11 @@ impl Config {
         self.general.data_dir.join("cache").join("sync_state")
     }
 
+    /// Get the daemon PID file path
+    pub fn daemon_pid_file(&self) -> PathBuf {
+        self.general.data_dir.join("daemon.pid")
+    }
+
     /// Resolve an account identifier (email or alias) to an email address
     pub fn resolve_account(&self, identifier: &str) -> Option<String> {
         // Check if it's an alias first

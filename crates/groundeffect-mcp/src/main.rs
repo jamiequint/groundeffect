@@ -6,7 +6,12 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use tracing::{error, info, Level};
+use tracing::{error, info};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::fmt::time::ChronoLocal;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
 use groundeffect_core::config::Config;
 use groundeffect_core::db::Database;
@@ -16,16 +21,28 @@ use groundeffect_core::oauth::OAuthManager;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging to stderr (stdout is used for JSON-RPC)
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(Level::WARN)
-        .with_writer(std::io::stderr)
-        .with_target(false)
-        .without_time()
+    // Load config first to get log path
+    let config = Arc::new(Config::load().unwrap_or_else(|_| Config::default()));
+
+    // Set up file logging with timestamps
+    let log_dir = config.general.data_dir.join("logs");
+    std::fs::create_dir_all(&log_dir)?;
+
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "mcp.log");
+
+    // Create a file layer with timestamps
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_appender)
+        .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string()))
+        .with_ansi(false)
+        .with_target(false);
+
+    // Initialize the subscriber with file logging at INFO level
+    tracing_subscriber::registry()
+        .with(file_layer.with_filter(tracing_subscriber::filter::LevelFilter::INFO))
         .init();
 
-    // Load configuration
-    let config = Arc::new(Config::load().unwrap_or_else(|_| Config::default()));
+    info!("GroundEffect MCP server starting");
 
     // Check if database exists
     let db_path = config.lancedb_dir();

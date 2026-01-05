@@ -15,7 +15,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::db::Database;
@@ -116,7 +116,24 @@ impl McpServer {
 
     /// Handle a JSON-RPC request
     async fn handle_request(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
-        let result = match request.method.as_str() {
+        let start = std::time::Instant::now();
+        let method = &request.method;
+
+        // Log incoming request (with tool name if it's a tool call)
+        let request_desc = if method == "tools/call" {
+            if let Some(params) = &request.params {
+                let tool_name = params["name"].as_str().unwrap_or("unknown");
+                format!("tools/call:{}", tool_name)
+            } else {
+                "tools/call".to_string()
+            }
+        } else {
+            method.clone()
+        };
+
+        info!("→ {}", request_desc);
+
+        let result = match method.as_str() {
             // MCP protocol methods
             "initialize" => self.handle_initialize(&request.params).await,
             "initialized" => Ok(Value::Null),
@@ -136,29 +153,43 @@ impl McpServer {
 
             _ => Err(Error::McpProtocol(format!(
                 "Unknown method: {}",
-                request.method
+                method
             ))),
         };
 
+        let elapsed = start.elapsed();
+        let elapsed_ms = elapsed.as_millis();
+
         match result {
-            Ok(value) => JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id.clone(),
-                result: Some(value),
-                error: None,
+            Ok(value) => {
+                // Log slow requests with warning
+                if elapsed_ms > 1000 {
+                    warn!("← {} OK ({}ms) SLOW", request_desc, elapsed_ms);
+                } else {
+                    info!("← {} OK ({}ms)", request_desc, elapsed_ms);
+                }
+                JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: Some(value),
+                    error: None,
+                }
             },
-            Err(e) => JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id.clone(),
-                result: None,
-                error: Some(JsonRpcError {
-                    code: -32000,
-                    message: e.to_string(),
-                    data: Some(serde_json::json!({
-                        "code": e.mcp_code(),
-                        "action": e.action_hint()
-                    })),
-                }),
+            Err(e) => {
+                error!("← {} ERROR ({}ms): {}", request_desc, elapsed_ms, e);
+                JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: -32000,
+                        message: e.to_string(),
+                        data: Some(serde_json::json!({
+                            "code": e.mcp_code(),
+                            "action": e.action_hint()
+                        })),
+                    }),
+                }
             },
         }
     }

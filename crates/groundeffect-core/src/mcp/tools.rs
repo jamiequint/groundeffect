@@ -1,6 +1,7 @@
 //! MCP tool implementations
 
 use std::sync::Arc;
+use std::process::Command;
 
 use chrono::Utc;
 use serde_json::Value;
@@ -323,6 +324,31 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["account"]
             }),
         },
+        // Daemon management tools
+        ToolDefinition {
+            name: "start_daemon".to_string(),
+            description: "Start the GroundEffect sync daemon. The daemon syncs emails and calendar events in the background.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "stop_daemon".to_string(),
+            description: "Stop the running GroundEffect sync daemon.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "get_daemon_status".to_string(),
+            description: "Check if the GroundEffect sync daemon is running.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
     ]
 }
 
@@ -369,6 +395,9 @@ impl ToolHandler {
             "get_sync_status" => self.get_sync_status(arguments).await,
             "reset_sync" => self.reset_sync(arguments).await,
             "extend_sync_range" => self.extend_sync_range(arguments).await,
+            "start_daemon" => self.start_daemon().await,
+            "stop_daemon" => self.stop_daemon().await,
+            "get_daemon_status" => self.get_daemon_status().await,
             _ => Err(Error::ToolNotFound(name.to_string())),
         }?;
 
@@ -521,7 +550,7 @@ impl ToolHandler {
                     "status": "active",
                     "years_to_sync": years_to_sync_str
                 },
-                "next_steps": "Run the daemon to start syncing: groundeffect-daemon"
+                "next_steps": "Use start_daemon tool to begin syncing"
             }))
         }
     }
@@ -839,7 +868,7 @@ Content-Type: text/html
                 "emails": email_count,
                 "events": event_count
             },
-            "next_steps": "Run the daemon to re-sync: groundeffect-daemon"
+            "next_steps": "Use start_daemon tool to re-sync"
         }))
     }
 
@@ -935,7 +964,236 @@ Content-Type: text/html
                 (current_sync_from - target_datetime).num_days()
             ),
             "note": "Data is synced newest-first within the new range. Stable IDs prevent duplicates.",
-            "next_steps": "Run the daemon to sync older data: groundeffect-daemon"
+            "next_steps": "Use start_daemon tool to begin syncing older data"
         }))
+    }
+
+    /// Get the path to the daemon binary (sibling of current executable)
+    fn get_daemon_binary_path(&self) -> Result<std::path::PathBuf> {
+        let current_exe = std::env::current_exe()
+            .map_err(|e| Error::Other(format!("Failed to get current executable path: {}", e)))?;
+
+        let exe_dir = current_exe.parent()
+            .ok_or_else(|| Error::Other("Failed to get executable directory".to_string()))?;
+
+        let daemon_path = exe_dir.join("groundeffect-daemon");
+
+        if daemon_path.exists() {
+            Ok(daemon_path)
+        } else {
+            Err(Error::Other(format!(
+                "Daemon binary not found at {:?}. Make sure groundeffect-daemon is built.",
+                daemon_path
+            )))
+        }
+    }
+
+    /// Check if daemon is running by reading PID file and checking process
+    fn is_daemon_running(&self) -> Option<u32> {
+        let pid_file = self.config.daemon_pid_file();
+
+        if !pid_file.exists() {
+            return None;
+        }
+
+        let pid_str = std::fs::read_to_string(&pid_file).ok()?;
+        let pid: u32 = pid_str.trim().parse().ok()?;
+
+        // Check if process is actually running
+        #[cfg(unix)]
+        {
+            use std::process::Command;
+            let output = Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .output()
+                .ok()?;
+
+            if output.status.success() {
+                Some(pid)
+            } else {
+                // Process not running, clean up stale PID file
+                let _ = std::fs::remove_file(&pid_file);
+                None
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            // On non-unix, just trust the PID file exists
+            Some(pid)
+        }
+    }
+
+    /// Start the daemon
+    async fn start_daemon(&self) -> Result<Value> {
+        // Check if already running
+        if let Some(pid) = self.is_daemon_running() {
+            return Ok(serde_json::json!({
+                "success": false,
+                "message": format!("Daemon is already running (PID {})", pid),
+                "status": "running",
+                "pid": pid
+            }));
+        }
+
+        // Get daemon binary path
+        let daemon_path = self.get_daemon_binary_path()?;
+
+        // Get credentials from environment (they should be set in the MCP wrapper script)
+        let client_id = std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_ID")
+            .or_else(|_| std::env::var("GROUNDEFFECT_CLIENT_ID"))
+            .ok();
+        let client_secret = std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_SECRET")
+            .or_else(|_| std::env::var("GROUNDEFFECT_CLIENT_SECRET"))
+            .ok();
+
+        // Start daemon as background process
+        let mut cmd = Command::new(&daemon_path);
+
+        // Pass through OAuth credentials if available
+        if let Some(id) = &client_id {
+            cmd.env("GROUNDEFFECT_GOOGLE_CLIENT_ID", id);
+        }
+        if let Some(secret) = &client_secret {
+            cmd.env("GROUNDEFFECT_GOOGLE_CLIENT_SECRET", secret);
+        }
+
+        // Spawn the daemon
+        let child = cmd
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| Error::Other(format!("Failed to start daemon: {}", e)))?;
+
+        let pid = child.id();
+
+        // Write PID file
+        let pid_file = self.config.daemon_pid_file();
+        if let Some(parent) = pid_file.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::write(&pid_file, pid.to_string())
+            .map_err(|e| Error::Other(format!("Failed to write PID file: {}", e)))?;
+
+        // Wait a moment for daemon to start
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Verify it's running
+        if self.is_daemon_running().is_some() {
+            Ok(serde_json::json!({
+                "success": true,
+                "message": "Daemon started successfully",
+                "status": "running",
+                "pid": pid
+            }))
+        } else {
+            // Clean up PID file if daemon didn't start
+            let _ = std::fs::remove_file(&pid_file);
+            Err(Error::Other("Daemon started but exited immediately. Check logs for errors.".to_string()))
+        }
+    }
+
+    /// Stop the daemon
+    async fn stop_daemon(&self) -> Result<Value> {
+        let pid = match self.is_daemon_running() {
+            Some(pid) => pid,
+            None => {
+                return Ok(serde_json::json!({
+                    "success": true,
+                    "message": "Daemon is not running",
+                    "status": "stopped"
+                }));
+            }
+        };
+
+        // Send SIGTERM to gracefully stop the daemon
+        #[cfg(unix)]
+        {
+            let output = Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .output()
+                .map_err(|e| Error::Other(format!("Failed to send stop signal: {}", e)))?;
+
+            if !output.status.success() {
+                return Err(Error::Other(format!(
+                    "Failed to stop daemon: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+        }
+
+        // Wait for daemon to stop
+        for _ in 0..10 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            if self.is_daemon_running().is_none() {
+                break;
+            }
+        }
+
+        // Clean up PID file
+        let pid_file = self.config.daemon_pid_file();
+        let _ = std::fs::remove_file(&pid_file);
+
+        if self.is_daemon_running().is_none() {
+            Ok(serde_json::json!({
+                "success": true,
+                "message": "Daemon stopped successfully",
+                "status": "stopped"
+            }))
+        } else {
+            // Force kill if still running
+            #[cfg(unix)]
+            {
+                let _ = Command::new("kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .output();
+            }
+
+            Ok(serde_json::json!({
+                "success": true,
+                "message": "Daemon force stopped",
+                "status": "stopped"
+            }))
+        }
+    }
+
+    /// Get daemon status
+    async fn get_daemon_status(&self) -> Result<Value> {
+        match self.is_daemon_running() {
+            Some(pid) => {
+                // Get additional info about the daemon process
+                let mut process_info = serde_json::json!({
+                    "running": true,
+                    "pid": pid,
+                    "status": "running"
+                });
+
+                // Try to get process uptime on Unix
+                #[cfg(unix)]
+                {
+                    if let Ok(output) = Command::new("ps")
+                        .args(["-o", "etime=", "-p", &pid.to_string()])
+                        .output()
+                    {
+                        if output.status.success() {
+                            let uptime = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            if !uptime.is_empty() {
+                                process_info["uptime"] = serde_json::json!(uptime);
+                            }
+                        }
+                    }
+                }
+
+                Ok(process_info)
+            }
+            None => {
+                Ok(serde_json::json!({
+                    "running": false,
+                    "status": "stopped",
+                    "message": "Daemon is not running. Use start_daemon to start it."
+                }))
+            }
+        }
     }
 }
