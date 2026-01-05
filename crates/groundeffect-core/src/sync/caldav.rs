@@ -47,18 +47,21 @@ impl CalDavClient {
 
         let access_token = self.oauth.get_valid_token(&self.account_id).await?;
 
+        // Default to 1 year ago if no since date specified
+        // Google Calendar API requires timeMin when using singleEvents=true with orderBy=startTime
+        let time_min = since.unwrap_or_else(|| Utc::now() - chrono::Duration::days(365));
+        // Format as RFC3339 and URL-encode (the '+' in timezone needs encoding)
+        let time_min_encoded = time_min.to_rfc3339().replace('+', "%2B");
+
         // Use Google Calendar API instead of CalDAV for easier parsing
-        let mut url = format!(
+        let url = format!(
             "https://www.googleapis.com/calendar/v3/calendars/primary/events?\
              maxResults=2500&\
              singleEvents=true&\
-             orderBy=startTime"
+             orderBy=startTime&\
+             timeMin={}",
+            time_min_encoded
         );
-
-        // Add timeMin filter if since date is specified
-        if let Some(since_date) = since {
-            url.push_str(&format!("&timeMin={}", since_date.to_rfc3339()));
-        }
 
         let response = self
             .client

@@ -180,20 +180,28 @@ impl SearchEngine {
 
         let results = search
             .limit(limit)
-            .select(lancedb::query::Select::columns(&["id"]))
+            .select(lancedb::query::Select::columns(&["id", "_score"]))
             .execute()
             .await?;
 
         let batches: Vec<RecordBatch> = results.try_collect().await?;
 
         let mut scored_results = Vec::new();
-        for (rank, batch) in batches.iter().enumerate() {
+        for batch in &batches {
             for row in 0..batch.num_rows() {
                 if let Some(id_col) = batch.column_by_name("id") {
                     if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
                         let id = id_array.value(row).to_string();
-                        // BM25 scores decrease with rank
-                        let score = 1.0 / ((rank * batch.num_rows() + row + 1) as f32);
+                        // Use _score from BM25 if available, otherwise use rank
+                        let score = if let Some(score_col) = batch.column_by_name("_score") {
+                            if let Some(score_array) = score_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
+                                score_array.value(row)
+                            } else {
+                                1.0 / (row as f32 + 1.0)
+                            }
+                        } else {
+                            1.0 / (row as f32 + 1.0)
+                        };
                         scored_results.push((id, score));
                     }
                 }
@@ -224,7 +232,7 @@ impl SearchEngine {
 
         let results = search
             .limit(limit)
-            .select(lancedb::query::Select::columns(&["id"]))
+            .select(lancedb::query::Select::columns(&["id", "_distance"]))
             .execute()
             .await?;
 
@@ -237,10 +245,9 @@ impl SearchEngine {
                     if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
                         let id = id_array.value(row).to_string();
 
-                        // Get distance score if available, otherwise use rank
+                        // Get distance score - convert to similarity (lower distance = higher similarity)
                         let score = if let Some(dist_col) = batch.column_by_name("_distance") {
                             if let Some(dist_array) = dist_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
-                                // Convert distance to similarity (lower distance = higher similarity)
                                 1.0 / (1.0 + dist_array.value(row))
                             } else {
                                 1.0 / (row as f32 + 1.0)
@@ -341,19 +348,27 @@ impl SearchEngine {
 
         let results = search
             .limit(limit)
-            .select(lancedb::query::Select::columns(&["id"]))
+            .select(lancedb::query::Select::columns(&["id", "_score"]))
             .execute()
             .await?;
 
         let batches: Vec<RecordBatch> = results.try_collect().await?;
 
         let mut scored_results = Vec::new();
-        for (rank, batch) in batches.iter().enumerate() {
+        for batch in &batches {
             for row in 0..batch.num_rows() {
                 if let Some(id_col) = batch.column_by_name("id") {
                     if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
                         let id = id_array.value(row).to_string();
-                        let score = 1.0 / ((rank * batch.num_rows() + row + 1) as f32);
+                        let score = if let Some(score_col) = batch.column_by_name("_score") {
+                            if let Some(score_array) = score_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
+                                score_array.value(row)
+                            } else {
+                                1.0 / (row as f32 + 1.0)
+                            }
+                        } else {
+                            1.0 / (row as f32 + 1.0)
+                        };
                         scored_results.push((id, score));
                     }
                 }
@@ -383,7 +398,7 @@ impl SearchEngine {
 
         let results = search
             .limit(limit)
-            .select(lancedb::query::Select::columns(&["id"]))
+            .select(lancedb::query::Select::columns(&["id", "_distance"]))
             .execute()
             .await?;
 

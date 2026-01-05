@@ -24,25 +24,38 @@ async fn main() -> Result<()> {
     // Load config first to get log path
     let config = Arc::new(Config::load().unwrap_or_else(|_| Config::default()));
 
-    // Set up file logging with timestamps
-    let log_dir = config.general.data_dir.join("logs");
-    std::fs::create_dir_all(&log_dir)?;
+    // Check if logging is enabled via environment variable
+    let enable_logging = std::env::var("GROUNDEFFECT_MCP_LOGGING")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
 
-    let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "mcp.log");
+    if enable_logging {
+        // Set up file logging to macOS standard location
+        let log_dir = config.general.data_dir.join("logs");
+        std::fs::create_dir_all(&log_dir)?;
 
-    // Create a file layer with timestamps
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(file_appender)
-        .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string()))
-        .with_ansi(false)
-        .with_target(false);
+        let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "mcp.log");
 
-    // Initialize the subscriber with file logging at INFO level
-    tracing_subscriber::registry()
-        .with(file_layer.with_filter(tracing_subscriber::filter::LevelFilter::INFO))
-        .init();
+        // Create a file layer with timestamps
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_writer(file_appender)
+            .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string()))
+            .with_ansi(false)
+            .with_target(true)
+            .with_thread_ids(true);
 
-    info!("GroundEffect MCP server starting");
+        // Filter out noisy LanceDB internal logs
+        let filter = tracing_subscriber::filter::EnvFilter::new(
+            "info,lance=warn,lancedb=warn,lance_core=warn,lance_index=warn,lance_table=warn,lance_file=warn,lance_encoding=warn"
+        );
+
+        // Initialize the subscriber with file logging
+        tracing_subscriber::registry()
+            .with(file_layer.with_filter(filter))
+            .init();
+
+        info!("GroundEffect MCP server starting with file logging enabled");
+    }
 
     // Check if database exists
     let db_path = config.lancedb_dir();

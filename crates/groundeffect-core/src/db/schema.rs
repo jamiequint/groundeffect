@@ -439,69 +439,99 @@ pub fn batch_to_email(batch: &RecordBatch, row: usize) -> Result<Email> {
     })
 }
 
-/// Convert an event to a record batch
+/// Convert a single event to a record batch
 pub fn event_to_batch(event: &CalendarEvent) -> Result<RecordBatch> {
+    events_to_batch(&[event.clone()])
+}
+
+/// Convert multiple events to a record batch
+pub fn events_to_batch(events: &[CalendarEvent]) -> Result<RecordBatch> {
     let schema = event_schema();
 
-    let start_str = match &event.start {
+    let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
+    let account_ids: Vec<&str> = events.iter().map(|e| e.account_id.as_str()).collect();
+    let account_aliases: Vec<Option<&str>> = events.iter().map(|e| e.account_alias.as_deref()).collect();
+    let google_event_ids: Vec<&str> = events.iter().map(|e| e.google_event_id.as_str()).collect();
+    let ical_uids: Vec<&str> = events.iter().map(|e| e.ical_uid.as_str()).collect();
+    let etags: Vec<&str> = events.iter().map(|e| e.etag.as_str()).collect();
+    let summaries: Vec<&str> = events.iter().map(|e| e.summary.as_str()).collect();
+    let descriptions: Vec<Option<&str>> = events.iter().map(|e| e.description.as_deref()).collect();
+    let locations: Vec<Option<&str>> = events.iter().map(|e| e.location.as_deref()).collect();
+
+    let starts: Vec<String> = events.iter().map(|e| match &e.start {
         EventTime::DateTime(dt) => dt.to_rfc3339(),
         EventTime::Date(d) => d.to_string(),
-    };
-    let end_str = match &event.end {
+    }).collect();
+    let ends: Vec<String> = events.iter().map(|e| match &e.end {
         EventTime::DateTime(dt) => dt.to_rfc3339(),
         EventTime::Date(d) => d.to_string(),
-    };
+    }).collect();
 
-    let organizer_json = event
-        .organizer
-        .as_ref()
-        .map(|o| serde_json::to_string(o).unwrap());
-    let attendees_json = if event.attendees.is_empty() {
-        None
-    } else {
-        Some(serde_json::to_string(&event.attendees).unwrap())
-    };
-    let reminders_json = if event.reminders.is_empty() {
-        None
-    } else {
-        Some(serde_json::to_string(&event.reminders).unwrap())
-    };
+    let timezones: Vec<&str> = events.iter().map(|e| e.timezone.as_str()).collect();
+    let all_days: Vec<u32> = events.iter().map(|e| if e.all_day { 1u32 } else { 0u32 }).collect();
+    let recurrence_rules: Vec<Option<&str>> = events.iter().map(|e| e.recurrence_rule.as_deref()).collect();
+    let recurrence_ids: Vec<Option<&str>> = events.iter().map(|e| e.recurrence_id.as_deref()).collect();
 
-    let embedding_values: Vec<f32> = event
-        .embedding
-        .as_ref()
-        .cloned()
-        .unwrap_or_else(|| vec![0.0; EMBEDDING_DIMENSION]);
-    let embedding_array =
-        FixedSizeListArray::try_new_from_values(Float32Array::from(embedding_values), EMBEDDING_DIMENSION as i32)?;
+    let organizers: Vec<Option<String>> = events.iter().map(|e| {
+        e.organizer.as_ref().map(|o| serde_json::to_string(o).unwrap())
+    }).collect();
+    let attendees: Vec<Option<String>> = events.iter().map(|e| {
+        if e.attendees.is_empty() { None } else { Some(serde_json::to_string(&e.attendees).unwrap()) }
+    }).collect();
 
-    let status_str = serde_json::to_string(&event.status).unwrap().trim_matches('"').to_string();
-    let transparency_str = serde_json::to_string(&event.transparency).unwrap().trim_matches('"').to_string();
+    let statuses: Vec<String> = events.iter().map(|e| {
+        serde_json::to_string(&e.status).unwrap().trim_matches('"').to_string()
+    }).collect();
+    let transparencies: Vec<String> = events.iter().map(|e| {
+        serde_json::to_string(&e.transparency).unwrap().trim_matches('"').to_string()
+    }).collect();
+
+    let reminders: Vec<Option<String>> = events.iter().map(|e| {
+        if e.reminders.is_empty() { None } else { Some(serde_json::to_string(&e.reminders).unwrap()) }
+    }).collect();
+
+    // Build embedding array
+    let embedding_values: Vec<f32> = events
+        .iter()
+        .flat_map(|e| {
+            e.embedding
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| vec![0.0; EMBEDDING_DIMENSION])
+        })
+        .collect();
+    let embedding_array = FixedSizeListArray::try_new_from_values(
+        Float32Array::from(embedding_values),
+        EMBEDDING_DIMENSION as i32,
+    )?;
+
+    let calendar_ids: Vec<&str> = events.iter().map(|e| e.calendar_id.as_str()).collect();
+    let synced_ats: Vec<i64> = events.iter().map(|e| e.synced_at.timestamp()).collect();
 
     let arrays: Vec<ArrayRef> = vec![
-        Arc::new(StringArray::from(vec![event.id.as_str()])),
-        Arc::new(StringArray::from(vec![event.account_id.as_str()])),
-        Arc::new(StringArray::from(vec![event.account_alias.as_deref()])),
-        Arc::new(StringArray::from(vec![event.google_event_id.as_str()])),
-        Arc::new(StringArray::from(vec![event.ical_uid.as_str()])),
-        Arc::new(StringArray::from(vec![event.etag.as_str()])),
-        Arc::new(StringArray::from(vec![event.summary.as_str()])),
-        Arc::new(StringArray::from(vec![event.description.as_deref()])),
-        Arc::new(StringArray::from(vec![event.location.as_deref()])),
-        Arc::new(StringArray::from(vec![start_str.as_str()])),
-        Arc::new(StringArray::from(vec![end_str.as_str()])),
-        Arc::new(StringArray::from(vec![event.timezone.as_str()])),
-        Arc::new(UInt32Array::from(vec![if event.all_day { 1u32 } else { 0u32 }])),
-        Arc::new(StringArray::from(vec![event.recurrence_rule.as_deref()])),
-        Arc::new(StringArray::from(vec![event.recurrence_id.as_deref()])),
-        Arc::new(StringArray::from(vec![organizer_json.as_deref()])),
-        Arc::new(StringArray::from(vec![attendees_json.as_deref()])),
-        Arc::new(StringArray::from(vec![status_str.as_str()])),
-        Arc::new(StringArray::from(vec![transparency_str.as_str()])),
-        Arc::new(StringArray::from(vec![reminders_json.as_deref()])),
+        Arc::new(StringArray::from(ids)),
+        Arc::new(StringArray::from(account_ids)),
+        Arc::new(StringArray::from(account_aliases)),
+        Arc::new(StringArray::from(google_event_ids)),
+        Arc::new(StringArray::from(ical_uids)),
+        Arc::new(StringArray::from(etags)),
+        Arc::new(StringArray::from(summaries)),
+        Arc::new(StringArray::from(descriptions)),
+        Arc::new(StringArray::from(locations)),
+        Arc::new(StringArray::from(starts.iter().map(|s| s.as_str()).collect::<Vec<_>>())),
+        Arc::new(StringArray::from(ends.iter().map(|s| s.as_str()).collect::<Vec<_>>())),
+        Arc::new(StringArray::from(timezones)),
+        Arc::new(UInt32Array::from(all_days)),
+        Arc::new(StringArray::from(recurrence_rules)),
+        Arc::new(StringArray::from(recurrence_ids)),
+        Arc::new(StringArray::from(organizers.iter().map(|s| s.as_deref()).collect::<Vec<_>>())),
+        Arc::new(StringArray::from(attendees.iter().map(|s| s.as_deref()).collect::<Vec<_>>())),
+        Arc::new(StringArray::from(statuses.iter().map(|s| s.as_str()).collect::<Vec<_>>())),
+        Arc::new(StringArray::from(transparencies.iter().map(|s| s.as_str()).collect::<Vec<_>>())),
+        Arc::new(StringArray::from(reminders.iter().map(|s| s.as_deref()).collect::<Vec<_>>())),
         Arc::new(embedding_array),
-        Arc::new(StringArray::from(vec![event.calendar_id.as_str()])),
-        Arc::new(Int64Array::from(vec![event.synced_at.timestamp()])),
+        Arc::new(StringArray::from(calendar_ids)),
+        Arc::new(Int64Array::from(synced_ats)),
     ];
 
     let batch = RecordBatch::try_new(Arc::new(schema), arrays)?;

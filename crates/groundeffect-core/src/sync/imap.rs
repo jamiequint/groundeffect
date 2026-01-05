@@ -144,7 +144,99 @@ impl ImapClient {
         Ok(count)
     }
 
-    /// Fetch emails newest first with pagination (offset and limit)
+    /// Fetch all emails since a date, newest first, in a single connection
+    /// Returns emails in batches via callback to allow incremental processing
+    pub async fn fetch_all_emails_since<F, Fut>(
+        &self,
+        since: DateTime<Utc>,
+        batch_size: usize,
+        mut on_batch: F,
+    ) -> Result<usize>
+    where
+        F: FnMut(Vec<Email>) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
+        let mut session = self.connect().await?;
+
+        // Select INBOX
+        session
+            .select("INBOX")
+            .await
+            .map_err(|e| Error::Imap(format!("Failed to select INBOX: {:?}", e)))?;
+
+        // Search for emails since the given date
+        let since_str = since.format("%d-%b-%Y").to_string();
+        let search_query = format!("SINCE {}", since_str);
+
+        self.rate_limiter.wait().await;
+        let uids = session
+            .uid_search(&search_query)
+            .await
+            .map_err(|e| Error::Imap(format!("Search failed: {:?}", e)))?;
+
+        // Collect UIDs and sort descending (newest first - higher UID = newer in Gmail)
+        let mut uids: Vec<u32> = uids.into_iter().collect();
+        uids.sort_by(|a, b| b.cmp(a)); // Descending order
+
+        let total_count = uids.len();
+        info!("Found {} emails since {} for {}", total_count, since_str, self.account_id);
+
+        if uids.is_empty() {
+            session.logout().await.ok();
+            return Ok(0);
+        }
+
+        // Fetch in batches, keeping the same connection
+        let mut total_fetched = 0;
+        for uid_batch in uids.chunks(batch_size) {
+            let uid_range = uid_batch
+                .iter()
+                .map(|u| u.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+
+            self.rate_limiter.wait().await;
+            let messages = session
+                .uid_fetch(&uid_range, "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)")
+                .await
+                .map_err(|e| Error::Imap(format!("Fetch failed: {:?}", e)))?;
+
+            // Collect messages
+            use futures::StreamExt;
+            let fetches: Vec<_> = messages.collect().await;
+
+            // Parse emails
+            let mut emails = Vec::new();
+            for result in fetches {
+                match result {
+                    Ok(fetch) => {
+                        if let Some(email) = self.parse_fetch(&fetch)? {
+                            emails.push(email);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Error fetching message: {:?}", e);
+                    }
+                }
+            }
+
+            // Sort by date descending
+            emails.sort_by(|a, b| b.date.cmp(&a.date));
+
+            let batch_count = emails.len();
+            total_fetched += batch_count;
+
+            info!("Fetched batch of {} emails ({}/{}) for {}", batch_count, total_fetched, total_count, self.account_id);
+
+            // Call the callback with this batch
+            on_batch(emails).await?;
+        }
+
+        session.logout().await.ok();
+        Ok(total_fetched)
+    }
+
+    /// Fetch emails newest first with pagination (offset and limit) - legacy method
     pub async fn fetch_emails_newest_first(
         &self,
         since: DateTime<Utc>,

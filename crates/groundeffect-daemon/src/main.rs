@@ -3,7 +3,7 @@
 //! Long-running launchd service that handles email/calendar sync,
 //! indexing, and writes to LanceDB.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 use chrono::Utc;
@@ -12,7 +12,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing::{error, info, warn, Level};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::fmt::time::ChronoLocal;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
 use groundeffect_core::config::Config;
 use groundeffect_core::db::Database;
@@ -29,6 +34,10 @@ use groundeffect_core::sync::{SyncEvent, SyncManager, SyncType};
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Enable file logging to ~/.groundeffect/logs/daemon.log
+    #[arg(long, global = true)]
+    log: bool,
 }
 
 #[derive(Subcommand)]
@@ -59,12 +68,56 @@ async fn main() -> Result<()> {
     // Initialize logging (but not for MCP mode - it uses stdio for JSON-RPC)
     let is_mcp = matches!(cli.command, Some(Commands::Mcp));
     if !is_mcp {
-        let _subscriber = tracing_subscriber::fmt()
-            .with_max_level(Level::INFO)
-            .with_span_events(FmtSpan::CLOSE)
-            .with_target(true)
-            .with_thread_ids(true)
-            .init();
+        // Check CLI flag OR environment variable for logging
+        let enable_logging = cli.log
+            || std::env::var("GROUNDEFFECT_DAEMON_LOGGING")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false);
+
+        if enable_logging {
+            // File logging to macOS standard location
+            let log_dir = directories::ProjectDirs::from("com", "groundeffect", "groundeffect")
+                .map(|dirs| dirs.data_dir().join("logs"))
+                .unwrap_or_else(|| {
+                    dirs::home_dir()
+                        .unwrap_or_default()
+                        .join("Library")
+                        .join("Application Support")
+                        .join("com.groundeffect.groundeffect")
+                        .join("logs")
+                });
+            std::fs::create_dir_all(&log_dir).ok();
+
+            let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "daemon.log");
+
+            // Filter out noisy LanceDB internal logs
+            let filter = tracing_subscriber::filter::EnvFilter::new(
+                "info,lance=warn,lancedb=warn,lance_core=warn,lance_index=warn,lance_table=warn,lance_file=warn,lance_encoding=warn"
+            );
+
+            let file_layer = tracing_subscriber::fmt::layer()
+                .with_writer(file_appender)
+                .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string()))
+                .with_ansi(false)
+                .with_target(true)
+                .with_thread_ids(true)
+                .with_span_events(FmtSpan::CLOSE);
+
+            tracing_subscriber::registry()
+                .with(file_layer.with_filter(filter))
+                .init();
+
+            // Log where logs are being written
+            info!("Logging to {:?}", log_dir.join("daemon.log"));
+        } else {
+            // Console logging (default)
+            let _subscriber = tracing_subscriber::fmt()
+                .with_max_level(Level::INFO)
+                .with_span_events(FmtSpan::CLOSE)
+                .with_target(true)
+                .with_thread_ids(true)
+                .init();
+        }
     }
 
     match cli.command {
@@ -349,13 +402,10 @@ async fn run_daemon() -> Result<()> {
     info!("Opening database at {:?}", config.lancedb_dir());
     let db = Arc::new(Database::open(config.lancedb_dir()).await?);
 
-    // Check for accounts
+    // Check for accounts (warn but don't exit - accounts can be added via MCP)
     let accounts = db.list_accounts().await?;
     if accounts.is_empty() {
-        println!("\n⚠️  No accounts configured!\n");
-        println!("Add an account first:");
-        println!("  cargo run --bin groundeffect-daemon -- add-account\n");
-        return Ok(());
+        info!("No accounts configured yet. Add accounts via MCP add_account tool.");
     }
 
     // Initialize embedding engine
@@ -463,21 +513,65 @@ async fn run_daemon() -> Result<()> {
         }
     });
 
-    // Spawn periodic sync task
+    // Track initialized accounts
+    let initialized_accounts: Arc<RwLock<std::collections::HashSet<String>>> =
+        Arc::new(RwLock::new(accounts.iter().map(|a| a.id.clone()).collect()));
+
+    // Spawn periodic sync task with new account detection
     let sync_manager_poll = sync_manager.clone();
     let config_poll = config.clone();
     let db_poll = db.clone();
+    let initialized_accounts_poll = initialized_accounts.clone();
     tokio::spawn(async move {
         let email_interval =
             tokio::time::Duration::from_secs(config_poll.sync.email_poll_interval_secs);
         let calendar_interval =
             tokio::time::Duration::from_secs(config_poll.sync.calendar_poll_interval_secs);
+        // Check for new accounts every 5 seconds
+        let new_account_interval = tokio::time::Duration::from_secs(5);
 
         let mut email_timer = tokio::time::interval(email_interval);
         let mut calendar_timer = tokio::time::interval(calendar_interval);
+        let mut new_account_timer = tokio::time::interval(new_account_interval);
 
         loop {
             tokio::select! {
+                _ = new_account_timer.tick() => {
+                    // Check for newly added accounts
+                    if let Ok(accounts) = db_poll.list_accounts().await {
+                        for account in &accounts {
+                            let is_new = !initialized_accounts_poll.read().unwrap().contains(&account.id);
+                            if is_new {
+                                info!("Detected new account: {}", account.id);
+                                initialized_accounts_poll.write().unwrap().insert(account.id.clone());
+
+                                // Initialize sync for the new account
+                                match sync_manager_poll.init_account(account).await {
+                                    Ok(_) => {
+                                        info!("Initialized sync for new account {}", account.id);
+
+                                        // Run initial sync
+                                        info!("Starting initial sync for {}", account.id);
+                                        match sync_manager_poll.initial_sync(&account.id).await {
+                                            Ok(_) => info!("Initial sync completed for {}", account.id),
+                                            Err(e) => error!("Initial sync failed for {}: {}", account.id, e),
+                                        }
+
+                                        // Start IMAP IDLE
+                                        if config_poll.sync.email_idle_enabled {
+                                            if let Err(e) = sync_manager_poll.start_idle(&account.id).await {
+                                                warn!("Failed to start IDLE for {}: {}", account.id, e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to initialize sync for new account {}: {}", account.id, e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 _ = email_timer.tick() => {
                     // Poll sync for all accounts (fallback if IDLE is disabled or disconnected)
                     if let Ok(accounts) = db_poll.list_accounts().await {

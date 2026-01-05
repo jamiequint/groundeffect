@@ -196,6 +196,71 @@ work = "work@gmail.com"
 personal = "personal@gmail.com"
 ```
 
+## Logging
+
+Both the daemon and MCP server can optionally write logs for debugging. Logging is **disabled by default** and must be explicitly enabled.
+
+### Log Files
+
+Logs are written to the macOS standard location:
+
+| Component | Log File | Purpose |
+|-----------|----------|---------|
+| Daemon | `~/Library/Application Support/com.groundeffect.groundeffect/logs/daemon.log` | Sync operations, IMAP/CalDAV activity |
+| MCP Server | `~/Library/Application Support/com.groundeffect.groundeffect/logs/mcp.log` | MCP tool calls, search queries |
+
+Logs use daily rotation and include timestamps, thread IDs, and target module information.
+
+### Enable Daemon Logging
+
+#### Via CLI
+
+```bash
+groundeffect-daemon --log
+```
+
+#### Via MCP Tool
+
+When using the `start_daemon` MCP tool, pass `logging: true`:
+
+```json
+{
+  "logging": true
+}
+```
+
+#### Via Environment Variable
+
+Set `GROUNDEFFECT_DAEMON_LOGGING=true` before starting the daemon.
+
+### Enable MCP Server Logging
+
+Set `GROUNDEFFECT_MCP_LOGGING=true` in your environment.
+
+### Enable Both in Claude Code MCP Config
+
+Add environment variables to your Claude Code MCP config in `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "groundeffect": {
+      "type": "stdio",
+      "command": "/path/to/groundeffect/groundeffect-mcp.sh",
+      "args": [],
+      "env": {
+        "GROUNDEFFECT_DAEMON_LOGGING": "true",
+        "GROUNDEFFECT_MCP_LOGGING": "true"
+      }
+    }
+  }
+}
+```
+
+This enables logging for both:
+- **MCP Server**: Logs immediately when Claude Code connects
+- **Daemon**: Logs when started via the `start_daemon` MCP tool
+
 ## Data Storage
 
 ```

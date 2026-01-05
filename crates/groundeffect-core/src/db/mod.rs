@@ -155,6 +155,28 @@ impl Database {
         Ok(())
     }
 
+    /// Refresh table handles to see latest data
+    /// Call this before queries if data may have been written by another process
+    pub async fn refresh_tables(&self) -> Result<()> {
+        let table_names = self.connection.table_names().execute().await?;
+
+        if table_names.contains(&EMAILS_TABLE.to_string()) {
+            let table = self.connection.open_table(EMAILS_TABLE).execute().await?;
+            *self.emails.write() = Some(table);
+        }
+        if table_names.contains(&EVENTS_TABLE.to_string()) {
+            let table = self.connection.open_table(EVENTS_TABLE).execute().await?;
+            *self.events.write() = Some(table);
+        }
+        if table_names.contains(&ACCOUNTS_TABLE.to_string()) {
+            let table = self.connection.open_table(ACCOUNTS_TABLE).execute().await?;
+            *self.accounts.write() = Some(table);
+        }
+
+        debug!("Refreshed table handles");
+        Ok(())
+    }
+
     /// Get the emails table
     pub fn emails_table(&self) -> Result<Table> {
         self.emails
@@ -228,23 +250,31 @@ impl Database {
 
     /// Insert or update a calendar event
     pub async fn upsert_event(&self, event: &CalendarEvent) -> Result<()> {
-        let table = self.events_table()?;
-        let batch = event_to_batch(event)?;
-        let batches = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(event_schema()));
+        self.upsert_events(&[event.clone()]).await
+    }
 
-        // Delete existing if present
-        table
-            .delete(&format!("id = '{}'", event.id))
-            .await
-            .ok();
+    /// Insert or update multiple calendar events
+    pub async fn upsert_events(&self, events: &[CalendarEvent]) -> Result<()> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let table = self.events_table()?;
+
+        // Delete existing
+        let ids: Vec<String> = events.iter().map(|e| format!("'{}'", e.id)).collect();
+        let filter = format!("id IN ({})", ids.join(", "));
+        table.delete(&filter).await.ok();
 
         // Insert new
+        let batch = events_to_batch(events)?;
+        let batches = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(event_schema()));
         table
             .add(Box::new(batches))
             .execute()
             .await?;
 
-        debug!("Upserted event {}", event.id);
+        debug!("Upserted {} events", events.len());
         Ok(())
     }
 
@@ -419,6 +449,95 @@ impl Database {
         let batches: Vec<RecordBatch> = results.try_collect().await?;
         let count: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
         Ok(count)
+    }
+
+    /// List recent emails sorted by date (newest first)
+    /// This is optimized for listing without search - no embedding lookup
+    pub async fn list_recent_emails(
+        &self,
+        account_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Email>> {
+        let table = self.emails_table()?;
+
+        // Select all columns except the embedding vector for speed
+        let columns = &[
+            "id", "account_id", "message_id", "thread_id", "folder",
+            "subject", "from_email", "from_name", "to_list", "cc_list", "bcc_list",
+            "date", "body_plain", "body_html", "snippet", "has_attachments",
+            "attachment_count", "labels", "is_read", "is_starred", "raw_headers",
+        ];
+
+        let mut query = table
+            .query()
+            .select(lancedb::query::Select::columns(columns));
+
+        if let Some(id) = account_id {
+            query = query.only_if(&format!("account_id = '{}'", id));
+        }
+
+        // LanceDB doesn't have ORDER BY in query API, so we fetch more and sort in memory
+        // For better performance with large datasets, consider adding a date index
+        let results = query.execute().await?;
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut emails = Vec::new();
+        for batch in &batches {
+            for i in 0..batch.num_rows() {
+                emails.push(batch_to_email(batch, i)?);
+            }
+        }
+
+        // Sort by date descending (newest first)
+        emails.sort_by(|a, b| b.date.cmp(&a.date));
+
+        // Return only the requested limit
+        emails.truncate(limit);
+
+        Ok(emails)
+    }
+
+    /// List recent events sorted by start time (newest first)
+    pub async fn list_recent_events(
+        &self,
+        account_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<CalendarEvent>> {
+        let table = self.events_table()?;
+
+        // Select all columns except the embedding vector for speed
+        let columns = &[
+            "id", "account_id", "calendar_id", "ical_uid", "summary", "description",
+            "location", "start_time", "end_time", "start_timestamp", "end_timestamp",
+            "is_all_day", "recurrence_rule", "organizer", "attendees", "status",
+            "created", "updated", "etag",
+        ];
+
+        let mut query = table
+            .query()
+            .select(lancedb::query::Select::columns(columns));
+
+        if let Some(id) = account_id {
+            query = query.only_if(&format!("account_id = '{}'", id));
+        }
+
+        let results = query.execute().await?;
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut events = Vec::new();
+        for batch in &batches {
+            for i in 0..batch.num_rows() {
+                events.push(batch_to_event(batch, i)?);
+            }
+        }
+
+        // Sort by start date descending (newest first)
+        events.sort_by(|a, b| b.start.as_date().cmp(&a.start.as_date()));
+
+        // Return only the requested limit
+        events.truncate(limit);
+
+        Ok(events)
     }
 }
 

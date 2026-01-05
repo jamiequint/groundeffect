@@ -114,6 +114,25 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "list_recent_emails".to_string(),
+            description: "List recent emails sorted by date (newest first). Much faster than search_emails for just getting recent messages.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string",
+                        "description": "Account email or alias. Omit to list from ALL accounts."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "maximum": 100,
+                        "description": "Number of emails to return"
+                    }
+                }
+            }),
+        },
+        ToolDefinition {
             name: "get_email".to_string(),
             description: "Fetch single email by ID".to_string(),
             input_schema: serde_json::json!({
@@ -330,7 +349,12 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             description: "Start the GroundEffect sync daemon. The daemon syncs emails and calendar events in the background.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "logging": {
+                        "type": "boolean",
+                        "description": "Enable file logging to ~/.groundeffect/logs/daemon.log. Useful for debugging sync issues."
+                    }
+                }
             }),
         },
         ToolDefinition {
@@ -385,6 +409,7 @@ impl ToolHandler {
             "get_account" => self.get_account(arguments).await,
             "add_account" => self.add_account(arguments).await,
             "search_emails" => self.search_emails(arguments).await,
+            "list_recent_emails" => self.list_recent_emails(arguments).await,
             "get_email" => self.get_email(arguments).await,
             "get_thread" => self.get_thread(arguments).await,
             "list_folders" => self.list_folders(arguments).await,
@@ -395,7 +420,7 @@ impl ToolHandler {
             "get_sync_status" => self.get_sync_status(arguments).await,
             "reset_sync" => self.reset_sync(arguments).await,
             "extend_sync_range" => self.extend_sync_range(arguments).await,
-            "start_daemon" => self.start_daemon().await,
+            "start_daemon" => self.start_daemon(arguments).await,
             "stop_daemon" => self.stop_daemon().await,
             "get_daemon_status" => self.get_daemon_status().await,
             _ => Err(Error::ToolNotFound(name.to_string())),
@@ -644,6 +669,13 @@ Content-Type: text/html
 
         let limit = args["limit"].as_u64().unwrap_or(10) as usize;
 
+        // For wildcard/empty queries, use fast path (no semantic search needed)
+        let query_trimmed = query.trim();
+        if query_trimmed.is_empty() || query_trimmed == "*" {
+            info!("Wildcard query detected, using fast list path");
+            return self.list_recent_emails(args).await;
+        }
+
         // Resolve account aliases
         let accounts = args["accounts"]
             .as_array()
@@ -671,6 +703,51 @@ Content-Type: text/html
             "accounts_searched": options.accounts.unwrap_or_default(),
             "total_count": results.len(),
             "search_time_ms": search_time
+        }))
+    }
+
+    /// List recent emails (fast, no search)
+    async fn list_recent_emails(&self, args: &Value) -> Result<Value> {
+        let limit = args["limit"].as_u64().unwrap_or(10) as usize;
+        let limit = limit.min(100); // Cap at 100
+
+        // Resolve account if provided (handle both "account" and "accounts" params)
+        let account_id = args["account"]
+            .as_str()
+            .and_then(|id| self.config.resolve_account(id))
+            .or_else(|| {
+                // Also check "accounts" array (for search_emails redirect)
+                args["accounts"]
+                    .as_array()
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.as_str())
+                    .and_then(|id| self.config.resolve_account(id))
+            });
+
+        info!("Listing recent emails: account={:?}, limit={}", account_id, limit);
+
+        let start = std::time::Instant::now();
+        let emails = self.db.list_recent_emails(account_id.as_deref(), limit).await?;
+        let query_time = start.elapsed().as_millis();
+
+        // Convert to summaries
+        let results: Vec<_> = emails.iter().map(|e| {
+            serde_json::json!({
+                "id": e.id,
+                "subject": e.subject,
+                "from": e.from.to_string_full(),
+                "date": e.date.to_rfc3339(),
+                "snippet": e.snippet,
+                "folder": e.folder,
+                "is_read": e.is_read(),
+                "has_attachments": e.has_attachments()
+            })
+        }).collect();
+
+        Ok(serde_json::json!({
+            "emails": results,
+            "count": results.len(),
+            "query_time_ms": query_time
         }))
     }
 
@@ -793,8 +870,17 @@ Content-Type: text/html
     }
 
     /// Get sync status
-    async fn get_sync_status(&self, args: &Value) -> Result<Value> {
+    async fn get_sync_status(&self, _args: &Value) -> Result<Value> {
+        // Refresh table handles to see latest data from daemon
+        self.db.refresh_tables().await?;
+
         let accounts = self.db.list_accounts().await?;
+
+        // Try to read daemon's progress file for live sync progress
+        let progress_file = self.config.sync_progress_file();
+        let sync_progress: Option<Vec<crate::sync::AccountSyncState>> = std::fs::read_to_string(&progress_file)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok());
 
         let mut account_stats = Vec::new();
         let mut total_emails = 0u64;
@@ -807,7 +893,12 @@ Content-Type: text/html
             total_emails += email_count;
             total_events += event_count;
 
-            account_stats.push(serde_json::json!({
+            // Check for live progress from daemon
+            let live_progress = sync_progress
+                .as_ref()
+                .and_then(|states| states.iter().find(|s| s.account_id == account.id));
+
+            let mut stat = serde_json::json!({
                 "id": account.id,
                 "alias": account.alias,
                 "status": format!("{:?}", account.status).to_lowercase(),
@@ -816,7 +907,26 @@ Content-Type: text/html
                 "email_count": email_count,
                 "event_count": event_count,
                 "attachment_count": 0 // TODO
-            }));
+            });
+
+            // Add live sync progress if available
+            if let Some(progress_state) = live_progress {
+                stat["is_syncing"] = serde_json::json!(progress_state.is_syncing);
+                if let Some(ref progress) = progress_state.initial_sync_progress {
+                    stat["sync_progress"] = serde_json::json!({
+                        "phase": format!("{:?}", progress.phase),
+                        "emails_synced": progress.emails_synced,
+                        "total_emails_estimated": progress.total_emails_estimated,
+                        "events_synced": progress.events_synced,
+                        "total_events_estimated": progress.total_events_estimated,
+                        "percentage_complete": progress.percentage_complete(),
+                        "emails_per_second": progress.emails_per_second,
+                        "estimated_seconds_remaining": progress.estimated_seconds_remaining()
+                    });
+                }
+            }
+
+            account_stats.push(stat);
         }
 
         Ok(serde_json::json!({
@@ -988,44 +1098,74 @@ Content-Type: text/html
         }
     }
 
-    /// Check if daemon is running by reading PID file and checking process
+    /// Check if daemon is running by reading PID file or using pgrep
     fn is_daemon_running(&self) -> Option<u32> {
+        // First, try PID file (for daemons started via MCP tool)
         let pid_file = self.config.daemon_pid_file();
 
-        if !pid_file.exists() {
-            return None;
+        if pid_file.exists() {
+            if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    // Verify the process is actually running
+                    #[cfg(unix)]
+                    {
+                        use std::process::Command;
+                        let output = Command::new("kill")
+                            .args(["-0", &pid.to_string()])
+                            .output()
+                            .ok();
+
+                        if let Some(out) = output {
+                            if out.status.success() {
+                                return Some(pid);
+                            }
+                        }
+                        // Process not running, clean up stale PID file
+                        let _ = std::fs::remove_file(&pid_file);
+                    }
+
+                    #[cfg(not(unix))]
+                    {
+                        return Some(pid);
+                    }
+                }
+            }
         }
 
-        let pid_str = std::fs::read_to_string(&pid_file).ok()?;
-        let pid: u32 = pid_str.trim().parse().ok()?;
-
-        // Check if process is actually running
+        // Fallback: use pgrep to find daemon (for manually started daemons)
         #[cfg(unix)]
         {
             use std::process::Command;
-            let output = Command::new("kill")
-                .args(["-0", &pid.to_string()])
+            let output = Command::new("pgrep")
+                .args(["-f", "groundeffect-daemon"])
                 .output()
                 .ok()?;
 
             if output.status.success() {
-                Some(pid)
-            } else {
-                // Process not running, clean up stale PID file
-                let _ = std::fs::remove_file(&pid_file);
-                None
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // pgrep returns one PID per line, take the first one
+                if let Some(first_line) = stdout.lines().next() {
+                    if let Ok(pid) = first_line.trim().parse::<u32>() {
+                        return Some(pid);
+                    }
+                }
             }
         }
 
-        #[cfg(not(unix))]
-        {
-            // On non-unix, just trust the PID file exists
-            Some(pid)
-        }
+        None
     }
 
     /// Start the daemon
-    async fn start_daemon(&self) -> Result<Value> {
+    async fn start_daemon(&self, arguments: &Value) -> Result<Value> {
+        // Parse logging option - check argument first, then environment variable
+        let enable_logging = arguments.get("logging")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_else(|| {
+                std::env::var("GROUNDEFFECT_DAEMON_LOGGING")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false)
+            });
+
         // Check if already running
         if let Some(pid) = self.is_daemon_running() {
             return Ok(serde_json::json!({
@@ -1049,6 +1189,11 @@ Content-Type: text/html
 
         // Start daemon as background process
         let mut cmd = Command::new(&daemon_path);
+
+        // Add logging flag if requested
+        if enable_logging {
+            cmd.arg("--log");
+        }
 
         // Pass through OAuth credentials if available
         if let Some(id) = &client_id {
@@ -1081,11 +1226,18 @@ Content-Type: text/html
 
         // Verify it's running
         if self.is_daemon_running().is_some() {
+            let message = if enable_logging {
+                "Daemon started successfully with file logging enabled"
+            } else {
+                "Daemon started successfully"
+            };
             Ok(serde_json::json!({
                 "success": true,
-                "message": "Daemon started successfully",
+                "message": message,
                 "status": "running",
-                "pid": pid
+                "pid": pid,
+                "logging_enabled": enable_logging,
+                "log_file": if enable_logging { Some("~/.groundeffect/logs/daemon.log") } else { None }
             }))
         } else {
             // Clean up PID file if daemon didn't start

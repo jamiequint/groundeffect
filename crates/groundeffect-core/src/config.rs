@@ -331,6 +331,11 @@ impl Config {
         self.general.data_dir.join("daemon.pid")
     }
 
+    /// Get the sync progress file path (for MCP to read daemon progress)
+    pub fn sync_progress_file(&self) -> PathBuf {
+        self.general.data_dir.join("sync_progress.json")
+    }
+
     /// Resolve an account identifier (email or alias) to an email address
     pub fn resolve_account(&self, identifier: &str) -> Option<String> {
         // Check if it's an alias first
