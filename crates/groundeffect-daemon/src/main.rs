@@ -175,7 +175,8 @@ Content-Type: text/html
         updated.alias = alias.or(updated.alias);
         db.upsert_account(&updated).await?;
     } else {
-        // Create new account
+        // Create new account with default 1 year sync
+        use chrono::Duration;
         let account = Account {
             id: user_info.email.clone(),
             alias,
@@ -184,6 +185,8 @@ Content-Type: text/html
             last_sync_email: None,
             last_sync_calendar: None,
             status: AccountStatus::Active,
+            sync_email_since: Some(Utc::now() - Duration::days(365)),
+            oldest_email_synced: None,
         };
         db.upsert_account(&account).await?;
         println!("✅ Account created: {}", account.id);

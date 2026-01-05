@@ -69,6 +69,64 @@ pub struct AccountSyncState {
     pub email_count: u64,
     pub event_count: u64,
     pub error: Option<String>,
+    /// Initial sync progress (None if not currently doing initial sync)
+    pub initial_sync_progress: Option<InitialSyncProgress>,
+}
+
+/// Progress tracking for initial sync
+#[derive(Debug, Clone)]
+pub struct InitialSyncProgress {
+    /// Total emails estimated on server
+    pub total_emails_estimated: u64,
+    /// Emails synced so far
+    pub emails_synced: u64,
+    /// Total events estimated
+    pub total_events_estimated: u64,
+    /// Events synced so far
+    pub events_synced: u64,
+    /// When sync started
+    pub started_at: DateTime<Utc>,
+    /// Current phase of sync
+    pub phase: SyncPhase,
+    /// Emails per second (smoothed)
+    pub emails_per_second: f64,
+}
+
+impl InitialSyncProgress {
+    /// Calculate percentage complete (0.0 - 100.0)
+    pub fn percentage_complete(&self) -> f64 {
+        let total = self.total_emails_estimated + self.total_events_estimated;
+        if total == 0 {
+            return 0.0;
+        }
+        let synced = self.emails_synced + self.events_synced;
+        (synced as f64 / total as f64) * 100.0
+    }
+
+    /// Estimate seconds remaining
+    pub fn estimated_seconds_remaining(&self) -> Option<u64> {
+        if self.emails_per_second <= 0.0 {
+            return None;
+        }
+        let remaining = (self.total_emails_estimated + self.total_events_estimated)
+            .saturating_sub(self.emails_synced + self.events_synced);
+        Some((remaining as f64 / self.emails_per_second) as u64)
+    }
+}
+
+/// Phase of initial sync
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncPhase {
+    /// Counting emails on server
+    Counting,
+    /// Syncing recent emails (last 90 days)
+    RecentEmails,
+    /// Syncing calendar events
+    Calendar,
+    /// Backfilling older emails
+    Backfill,
+    /// Completed
+    Completed,
 }
 
 /// Sync manager for all accounts
@@ -152,21 +210,16 @@ impl SyncManager {
             email_count: self.db.count_emails(Some(&account.id)).await?,
             event_count: self.db.count_events(Some(&account.id)).await?,
             error: None,
+            initial_sync_progress: None,
         };
 
         self.account_states.write().insert(account.id.clone(), state);
         Ok(())
     }
 
-    /// Run initial sync for an account (smart sync strategy)
+    /// Run initial sync for an account (smart sync strategy - newest first)
     pub async fn initial_sync(&self, account_id: &str) -> Result<()> {
         info!("Starting initial sync for {}", account_id);
-
-        // Phase 1: Sync recent emails (last 90 days) + unread/flagged
-        self.emit_event(SyncEvent::SyncStarted {
-            account_id: account_id.to_string(),
-            sync_type: SyncType::Email,
-        }).await;
 
         let imap_client = ImapClient::new(
             account_id,
@@ -174,35 +227,128 @@ impl SyncManager {
             self.rate_limiter.clone(),
         ).await?;
 
-        // Smart initial sync: last 90 days + unread + flagged
-        let since = Utc::now() - Duration::days(90);
-        let emails = imap_client.fetch_recent_emails(since, 1000).await?;
-
-        info!("Fetched {} recent emails for {}", emails.len(), account_id);
-
-        // Generate embeddings and store
-        for email in &emails {
-            let mut email = email.clone();
-            let text = email.searchable_text();
-            email.embedding = Some(self.embedding.embed(&text)?);
-            self.db.upsert_email(&email).await?;
+        // Phase 0: Count emails to get progress estimate
+        {
+            let mut states = self.account_states.write();
+            if let Some(state) = states.get_mut(account_id) {
+                state.initial_sync_progress = Some(InitialSyncProgress {
+                    total_emails_estimated: 0,
+                    emails_synced: 0,
+                    total_events_estimated: 0,
+                    events_synced: 0,
+                    started_at: Utc::now(),
+                    phase: SyncPhase::Counting,
+                    emails_per_second: 0.0,
+                });
+            }
         }
+
+        // Count total emails in INBOX (for progress estimation)
+        let total_emails = imap_client.count_emails().await.unwrap_or(0);
+        info!("Account {} has approximately {} emails in INBOX", account_id, total_emails);
+
+        // Update progress with count
+        {
+            let mut states = self.account_states.write();
+            if let Some(state) = states.get_mut(account_id) {
+                if let Some(ref mut progress) = state.initial_sync_progress {
+                    progress.total_emails_estimated = total_emails;
+                    progress.phase = SyncPhase::RecentEmails;
+                }
+            }
+        }
+
+        // Phase 1: Sync recent emails - NEWEST FIRST
+        self.emit_event(SyncEvent::SyncStarted {
+            account_id: account_id.to_string(),
+            sync_type: SyncType::Email,
+        }).await;
+
+        // Get account's sync_email_since preference, default to 90 days
+        let account = self.db.get_account(account_id).await?
+            .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
+        let since = account.sync_email_since.unwrap_or_else(|| Utc::now() - Duration::days(90));
+        let batch_size = 50; // Fetch in batches for progress tracking
+        let mut total_synced = 0usize;
+        let sync_start = std::time::Instant::now();
+
+        // Fetch emails newest first in batches
+        let mut offset = 0;
+        loop {
+            let emails = imap_client.fetch_emails_newest_first(since, batch_size, offset).await?;
+            if emails.is_empty() {
+                break;
+            }
+
+            let batch_count = emails.len();
+            info!("Fetched batch of {} emails (offset {}) for {}", batch_count, offset, account_id);
+
+            // Generate embeddings and store
+            for email in &emails {
+                let mut email = email.clone();
+                let text = email.searchable_text();
+                email.embedding = Some(self.embedding.embed(&text)?);
+                self.db.upsert_email(&email).await?;
+            }
+
+            total_synced += batch_count;
+            offset += batch_count;
+
+            // Update progress
+            {
+                let elapsed = sync_start.elapsed().as_secs_f64();
+                let mut states = self.account_states.write();
+                if let Some(state) = states.get_mut(account_id) {
+                    state.email_count = total_synced as u64;
+                    if let Some(ref mut progress) = state.initial_sync_progress {
+                        progress.emails_synced = total_synced as u64;
+                        progress.emails_per_second = if elapsed > 0.0 {
+                            total_synced as f64 / elapsed
+                        } else {
+                            0.0
+                        };
+                    }
+                }
+            }
+
+            // If we got fewer than batch_size, we're done
+            if batch_count < batch_size {
+                break;
+            }
+        }
+
+        info!("Fetched {} recent emails for {}", total_synced, account_id);
 
         self.emit_event(SyncEvent::SyncCompleted {
             account_id: account_id.to_string(),
             sync_type: SyncType::Email,
-            count: emails.len(),
+            count: total_synced,
         }).await;
 
         // Update state
-        if let Some(state) = self.account_states.write().get_mut(account_id) {
-            state.last_email_sync = Some(Utc::now());
-            state.email_count += emails.len() as u64;
-            state.is_syncing = false;
+        {
+            let mut states = self.account_states.write();
+            if let Some(state) = states.get_mut(account_id) {
+                state.last_email_sync = Some(Utc::now());
+                state.is_syncing = false;
+                if let Some(ref mut progress) = state.initial_sync_progress {
+                    progress.phase = SyncPhase::Calendar;
+                }
+            }
         }
 
         // Phase 2: Start calendar sync
         self.sync_calendar(account_id).await?;
+
+        // Mark as completed
+        {
+            let mut states = self.account_states.write();
+            if let Some(state) = states.get_mut(account_id) {
+                if let Some(ref mut progress) = state.initial_sync_progress {
+                    progress.phase = SyncPhase::Completed;
+                }
+            }
+        }
 
         // Phase 3: Background backfill will be handled by the daemon
         info!("Initial sync completed for {}", account_id);

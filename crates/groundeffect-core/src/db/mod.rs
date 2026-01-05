@@ -347,6 +347,28 @@ impl Database {
         Ok(accounts)
     }
 
+    /// Clear all synced data for an account (keeps the account, clears emails/events)
+    pub async fn clear_account_sync_data(&self, account_id: &str) -> Result<(u64, u64)> {
+        // Count before deleting
+        let email_count = self.count_emails(Some(account_id)).await?;
+        let event_count = self.count_events(Some(account_id)).await?;
+
+        // Delete emails
+        let emails_table = self.emails_table()?;
+        emails_table
+            .delete(&format!("account_id = '{}'", account_id))
+            .await?;
+
+        // Delete events
+        let events_table = self.events_table()?;
+        events_table
+            .delete(&format!("account_id = '{}'", account_id))
+            .await?;
+
+        info!("Cleared {} emails and {} events for account {}", email_count, event_count, account_id);
+        Ok((email_count, event_count))
+    }
+
     /// Delete an account and all its data
     pub async fn delete_account(&self, account_id: &str) -> Result<()> {
         // Delete emails

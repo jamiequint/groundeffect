@@ -128,11 +128,28 @@ impl ImapClient {
         Ok(session)
     }
 
-    /// Fetch recent emails since a given date
-    pub async fn fetch_recent_emails(
+    /// Count total emails in INBOX (for progress estimation)
+    pub async fn count_emails(&self) -> Result<u64> {
+        let mut session = self.connect().await?;
+
+        // Select INBOX and get message count
+        let mailbox = session
+            .select("INBOX")
+            .await
+            .map_err(|e| Error::Imap(format!("Failed to select INBOX: {:?}", e)))?;
+
+        let count = mailbox.exists as u64;
+        session.logout().await.ok();
+
+        Ok(count)
+    }
+
+    /// Fetch emails newest first with pagination (offset and limit)
+    pub async fn fetch_emails_newest_first(
         &self,
         since: DateTime<Utc>,
         limit: usize,
+        offset: usize,
     ) -> Result<Vec<Email>> {
         let mut session = self.connect().await?;
 
@@ -152,10 +169,16 @@ impl ImapClient {
             .await
             .map_err(|e| Error::Imap(format!("Search failed: {:?}", e)))?;
 
-        let uids: Vec<u32> = uids.into_iter().take(limit).collect();
-        debug!("Found {} emails since {}", uids.len(), since_str);
+        // Collect UIDs and sort descending (newest first - higher UID = newer in Gmail)
+        let mut uids: Vec<u32> = uids.into_iter().collect();
+        uids.sort_by(|a, b| b.cmp(a)); // Descending order
+
+        // Apply offset and limit
+        let uids: Vec<u32> = uids.into_iter().skip(offset).take(limit).collect();
+        debug!("Found {} emails since {} (offset={}, limit={})", uids.len(), since_str, offset, limit);
 
         if uids.is_empty() {
+            session.logout().await.ok();
             return Ok(vec![]);
         }
 
@@ -179,7 +202,7 @@ impl ImapClient {
         // Now we can logout
         session.logout().await.ok();
 
-        // Parse the collected messages
+        // Parse the collected messages and preserve order (newest first)
         let mut emails = Vec::new();
         for result in fetches {
             match result {
@@ -194,8 +217,21 @@ impl ImapClient {
             }
         }
 
-        info!("Fetched {} emails for {}", emails.len(), self.account_id);
+        // Sort by date descending to ensure newest first
+        emails.sort_by(|a, b| b.date.cmp(&a.date));
+
+        info!("Fetched {} emails for {} (newest first)", emails.len(), self.account_id);
         Ok(emails)
+    }
+
+    /// Fetch recent emails since a given date
+    pub async fn fetch_recent_emails(
+        &self,
+        since: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<Email>> {
+        // Delegate to newest-first with offset 0
+        self.fetch_emails_newest_first(since, limit, 0).await
     }
 
     /// Parse a fetched message into an Email struct
@@ -303,8 +339,11 @@ impl ImapClient {
             .map(|list| list.into_iter().map(|s| s.to_string()).collect())
             .unwrap_or_default();
 
+        // Use a stable ID based on account + message_id to prevent duplicates on re-sync
+        let stable_id = format!("{}:{}", self.account_id, &message_id);
+
         let email = Email {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: stable_id,
             account_id: self.account_id.clone(),
             account_alias: None,
             message_id,

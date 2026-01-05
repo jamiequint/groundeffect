@@ -119,6 +119,8 @@ pub fn account_schema() -> Schema {
         Field::new("last_sync_email", DataType::Int64, true),
         Field::new("last_sync_calendar", DataType::Int64, true),
         Field::new("status", DataType::Utf8, false),
+        Field::new("sync_email_since", DataType::Int64, true),
+        Field::new("oldest_email_synced", DataType::Int64, true),
     ])
 }
 
@@ -660,6 +662,12 @@ pub fn account_to_batch(account: &Account) -> Result<RecordBatch> {
             .last_sync_calendar
             .map(|d| d.timestamp())])),
         Arc::new(StringArray::from(vec![status_str])),
+        Arc::new(Int64Array::from(vec![account
+            .sync_email_since
+            .map(|d| d.timestamp())])),
+        Arc::new(Int64Array::from(vec![account
+            .oldest_email_synced
+            .map(|d| d.timestamp())])),
     ];
 
     let batch = RecordBatch::try_new(Arc::new(schema), arrays)?;
@@ -722,6 +730,9 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
     let last_sync_email = get_opt_i64("last_sync_email").and_then(|ts| DateTime::from_timestamp(ts, 0));
     let last_sync_calendar = get_opt_i64("last_sync_calendar").and_then(|ts| DateTime::from_timestamp(ts, 0));
 
+    let sync_email_since = get_opt_i64("sync_email_since").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let oldest_email_synced = get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+
     Ok(Account {
         id: get_string("id"),
         alias: get_opt_string("alias"),
@@ -730,5 +741,7 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
         last_sync_email,
         last_sync_calendar,
         status,
+        sync_email_since,
+        oldest_email_synced,
     })
 }

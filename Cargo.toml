@@ -69,6 +69,8 @@ mail-parser = "0.10"
 mail-builder = "0.3"
 base64 = "0.22"
 url = "2.5"
+open = "5.3"
+urlencoding = "2.1"
 
 # Shared library
 groundeffect-core = { path = "crates/groundeffect-core" }
