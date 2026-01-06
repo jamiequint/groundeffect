@@ -2,7 +2,7 @@
 
 Hyper-fast, local Gmail and Google Calendar indexing for Claude Code.
 
-GroundEffect is a local headless IMAP/CalDav client and MCP Server for Claude Code built in Rust with LanceDB.
+GroundEffect is a local headless IMAP/CalDav client, Claude Code skill, and MCP server built in Rust with LanceDB.
 
 ## Features
 
