@@ -17,43 +17,87 @@ use groundeffect_core::search::{CalendarSearchOptions, SearchEngine, SearchOptio
 
 #[derive(Parser)]
 #[command(name = "groundeffect")]
-#[command(about = "GroundEffect email/calendar sync CLI", long_about = None)]
+#[command(about = "GroundEffect - Local email and calendar sync with semantic search")]
+#[command(long_about = "GroundEffect syncs Gmail and Google Calendar to a local database with full-text \
+and semantic (vector) search capabilities. Data is stored locally in LanceDB.
+
+QUICK START:
+  1. Start daemon:     groundeffect daemon start
+  2. Check status:     groundeffect sync status
+  3. Search emails:    groundeffect email search \"meeting notes\"
+  4. Search calendar:  groundeffect calendar search \"standup\"
+
+OUTPUT FORMAT:
+  All commands output JSON by default (best for programmatic/AI use).
+  Add --human only for direct terminal reading by humans.
+
+JSON RESPONSE FIELDS:
+  sync status returns: account, status, email_count, event_count, oldest_email, newest_email,
+    oldest_event, newest_event, last_email_sync, last_calendar_sync, attachments_total,
+    attachments_downloaded, attachments_size_bytes, sync_email_since, sync_attachments
+
+  account show returns: email, alias, display_name, status, added_at, email_count, event_count,
+    attachments_total, attachments_downloaded, attachments_size_bytes, last_sync_email,
+    last_sync_calendar, sync_email_since, sync_attachments
+
+  email search returns: id, from, to, subject, date, snippet, account_id, score
+
+KEY SETTINGS:
+  - sync_email_since: ISO 8601 date - emails before this date are not synced
+  - sync_attachments: boolean - whether attachment auto-download is enabled
+  - oldest_email: actual oldest email date in database (may differ from sync_email_since)
+
+MODIFYING SETTINGS (via MCP/Claude Code skill):
+  - To sync older emails: manage_sync action='extend' target_date='YYYY-MM-DD'
+  - To enable attachments: manage_accounts action='configure' sync_attachments=true
+  - To set alias: manage_accounts action='configure' alias='myalias'
+
+EXAMPLES:
+  groundeffect email search \"budget report\" --from finance@company.com --after 2024-01-01
+  groundeffect calendar search \"team meeting\" --after 2024-06-01 --limit 20
+  groundeffect account show user@gmail.com
+  groundeffect sync status")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Human-readable output (default is JSON)
+    /// Output in human-readable format instead of JSON. Applies to all subcommands.
     #[arg(long, global = true)]
     human: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Email commands
+    /// Search, list, and view emails. Use 'email search' for semantic search across all synced emails.
     Email {
         #[command(subcommand)]
         command: EmailCommands,
     },
-    /// Calendar commands
+    /// Search and view calendar events. Use 'calendar search' for semantic search across events.
     Calendar {
         #[command(subcommand)]
         command: CalendarCommands,
     },
-    /// Account management
+    /// View account details including sync settings (sync_email_since, sync_attachments).
     Account {
         #[command(subcommand)]
         command: AccountCommands,
     },
-    /// Sync management
+    /// Check sync status: email/event counts, date ranges, and configured sync settings.
     Sync {
         #[command(subcommand)]
         command: SyncCommands,
     },
-    /// Daemon management
+    /// Start, stop, or check status of the background sync daemon.
     Daemon {
         #[command(subcommand)]
         command: DaemonCommands,
+    },
+    /// Configure groundeffect settings and Claude Code integration.
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
     },
 }
 
@@ -63,66 +107,92 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum EmailCommands {
-    /// Search emails using hybrid BM25 + vector semantic search
+    /// Search emails using hybrid BM25 + vector semantic search.
+    /// Returns JSON array with: id, from, to, subject, date, snippet, account_id, score.
+    /// Use the 'id' field with 'email show' to get full email body.
+    #[command(long_about = "Search emails using hybrid BM25 + semantic vector search.
+
+Returns JSON array of matching emails, sorted by relevance score.
+
+RESPONSE FIELDS:
+  id          - Unique email ID (use with 'email show' for full content)
+  from        - Sender email address
+  to          - Array of recipient email addresses
+  subject     - Email subject line
+  date        - ISO 8601 timestamp
+  snippet     - Preview of email body (first ~100 chars)
+  account_id  - Which synced account this email belongs to
+  score       - Relevance score (higher = better match)
+
+SEARCH TIPS:
+  - Query uses semantic search: \"budget discussions\" finds related emails even without exact words
+  - Combine with filters for precise results: --from, --after, --before
+  - Date format is YYYY-MM-DD
+
+EXAMPLES:
+  groundeffect email search \"quarterly budget\"
+  groundeffect email search \"project status\" --from manager@company.com
+  groundeffect email search \"invoice\" --after 2024-01-01 --has-attachment")]
     Search {
-        /// Search query (natural language)
+        /// Natural language search query. Uses semantic search - finds conceptually similar content.
         query: String,
-        /// Filter by sender email/name
+        /// Filter by sender email address or name (partial match supported)
         #[arg(long)]
         from: Option<String>,
-        /// Filter by recipient
+        /// Filter by recipient email address (partial match supported)
         #[arg(long)]
         to: Option<String>,
-        /// Emails after date (YYYY-MM-DD)
+        /// Only emails after this date (format: YYYY-MM-DD)
         #[arg(long)]
         after: Option<String>,
-        /// Emails before date (YYYY-MM-DD)
+        /// Only emails before this date (format: YYYY-MM-DD)
         #[arg(long)]
         before: Option<String>,
-        /// Filter by IMAP folder
+        /// Filter by Gmail label or IMAP folder name
         #[arg(long)]
         folder: Option<String>,
-        /// Only emails with attachments
+        /// Only return emails that have attachments
         #[arg(long)]
         has_attachment: bool,
+        /// Filter to specific account(s) by email address. Can specify multiple.
+        #[arg(long)]
+        account: Option<Vec<String>>,
+        /// Maximum number of results to return (default: 10, max: 100)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Human-readable output instead of JSON
+        #[arg(long)]
+        human: bool,
+    },
+    /// List most recent emails by date (no search query, just chronological).
+    /// Returns same JSON format as search.
+    List {
+        /// Filter to specific account by email address
+        #[arg(long)]
+        account: Option<String>,
+        /// Maximum number of results (default: 10, max: 100)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Human-readable output instead of JSON
+        #[arg(long)]
+        human: bool,
+    },
+    /// Show full email content by ID. Returns: id, from, to, cc, subject, date, folder, account_id, body, thread_id, attachments.
+    Show {
+        /// Email ID (from search/list results)
+        id: String,
+        /// Human-readable output instead of JSON
+        #[arg(long)]
+        human: bool,
+    },
+    /// Show all emails in a thread by Gmail thread ID.
+    Thread {
+        /// Gmail thread ID (numeric, from email show result's thread_id field)
+        thread_id: String,
         /// Filter to specific account(s)
         #[arg(long)]
         account: Option<Vec<String>>,
-        /// Number of results (default 10, max 100)
-        #[arg(long, default_value = "10")]
-        limit: usize,
-        /// Human-readable output
-        #[arg(long)]
-        human: bool,
-    },
-    /// List recent emails
-    List {
-        /// Filter to specific account
-        #[arg(long)]
-        account: Option<String>,
-        /// Number of emails (default 10, max 100)
-        #[arg(long, default_value = "10")]
-        limit: usize,
-        /// Human-readable output
-        #[arg(long)]
-        human: bool,
-    },
-    /// Show single email by ID
-    Show {
-        /// Email ID
-        id: String,
-        /// Human-readable output
-        #[arg(long)]
-        human: bool,
-    },
-    /// Show email thread
-    Thread {
-        /// Thread ID
-        thread_id: String,
-        /// Filter to specific accounts
-        #[arg(long)]
-        account: Option<Vec<String>>,
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
@@ -134,43 +204,62 @@ enum EmailCommands {
 
 #[derive(Subcommand)]
 enum CalendarCommands {
-    /// Search calendar events
+    /// Search calendar events using semantic search.
+    /// Returns JSON array with: id, summary, start, end, location, account_id, calendar_id, score.
+    #[command(long_about = "Search calendar events using semantic vector search.
+
+Returns JSON array of matching events, sorted by relevance score.
+
+RESPONSE FIELDS:
+  id          - Unique event ID (use with 'calendar show' for full details)
+  summary     - Event title
+  start       - Start time (ISO 8601 or YYYY-MM-DD for all-day events)
+  end         - End time (ISO 8601 or YYYY-MM-DD for all-day events)
+  location    - Event location (may be null)
+  account_id  - Which synced account this event belongs to
+  calendar_id - Google Calendar ID
+  score       - Relevance score (higher = better match)
+
+EXAMPLES:
+  groundeffect calendar search \"team standup\"
+  groundeffect calendar search \"1:1 meeting\" --after 2024-01-01
+  groundeffect calendar search \"quarterly review\" --limit 20")]
     Search {
-        /// Search query (natural language)
+        /// Natural language search query. Uses semantic search.
         query: String,
-        /// Events after date (YYYY-MM-DD)
+        /// Only events starting after this date (format: YYYY-MM-DD)
         #[arg(long)]
         after: Option<String>,
-        /// Events before date (YYYY-MM-DD)
+        /// Only events starting before this date (format: YYYY-MM-DD)
         #[arg(long)]
         before: Option<String>,
-        /// Filter by calendar ID
+        /// Filter by Google Calendar ID
         #[arg(long)]
         calendar: Option<String>,
-        /// Filter to specific account(s)
+        /// Filter to specific account(s) by email address
         #[arg(long)]
         account: Option<Vec<String>>,
-        /// Number of results (default 10, max 100)
+        /// Maximum number of results (default: 10, max: 100)
         #[arg(long, default_value = "10")]
         limit: usize,
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
-    /// List all calendars
+    /// List calendars and event counts per account.
     List {
-        /// Filter to specific account(s)
+        /// Filter to specific account(s) by email address
         #[arg(long)]
         account: Option<Vec<String>>,
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
-    /// Show single calendar event
+    /// Show full event details by ID. Returns: id, summary, start, end, location, description, attendees, account_id, calendar_id.
     Show {
-        /// Event ID
+        /// Event ID (from search results)
         id: String,
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
@@ -182,17 +271,40 @@ enum CalendarCommands {
 
 #[derive(Subcommand)]
 enum AccountCommands {
-    /// List all accounts
+    /// List all synced accounts with status. Returns JSON array with: email, alias, display_name, status, added_at, last_sync_email, last_sync_calendar.
     List {
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
-    /// Show account details
+    /// Show detailed account info including sync settings.
+    /// Returns: email, alias, display_name, status, added_at, email_count, event_count,
+    /// attachments_total, attachments_downloaded, attachments_size_bytes, last_sync_email,
+    /// last_sync_calendar, sync_email_since, sync_attachments.
+    #[command(long_about = "Show detailed account information including sync configuration.
+
+RESPONSE FIELDS:
+  email                   - Account email address (primary identifier)
+  alias                   - User-defined alias (may be null)
+  display_name            - Google profile display name
+  status                  - Account status: Active, NeedsReauth, Disabled, or Syncing
+  added_at                - When account was added (ISO 8601)
+  email_count             - Number of emails synced
+  event_count             - Number of calendar events synced
+  attachments_total       - Total attachments found in emails
+  attachments_downloaded  - Number of attachments downloaded locally
+  attachments_size_bytes  - Total size of downloaded attachments
+  last_sync_email         - Last successful email sync (ISO 8601, may be null)
+  last_sync_calendar      - Last successful calendar sync (ISO 8601, may be null)
+  sync_email_since        - Configured email sync start date (ISO 8601, may be null)
+  sync_attachments        - Whether attachment auto-download is enabled (boolean)
+
+NOTE: sync_email_since is the configured cutoff - emails older than this are not synced.
+Use 'sync status' to see oldest_email which shows the actual oldest email in database.")]
     Show {
-        /// Account email or alias
+        /// Account email address or alias
         account: String,
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
@@ -204,12 +316,40 @@ enum AccountCommands {
 
 #[derive(Subcommand)]
 enum SyncCommands {
-    /// Show sync status
+    /// Show sync status for all accounts or a specific account.
+    /// Returns JSON array with comprehensive sync information.
+    #[command(long_about = "Show detailed sync status including email/event counts and date ranges.
+
+RESPONSE FIELDS:
+  account               - Account email address
+  status                - Account status: Active, NeedsReauth, Disabled, or Syncing
+  email_count           - Total emails synced
+  event_count           - Total calendar events synced
+  oldest_email          - Date of oldest email in database (YYYY-MM-DD, may be null)
+  newest_email          - Date of newest email in database (YYYY-MM-DD, may be null)
+  oldest_event          - Date of oldest event in database (YYYY-MM-DD, may be null)
+  newest_event          - Date of newest event in database (YYYY-MM-DD, may be null)
+  last_email_sync       - Last email sync time (ISO 8601, may be null)
+  last_calendar_sync    - Last calendar sync time (ISO 8601, may be null)
+  attachments_total     - Total attachments found
+  attachments_downloaded - Attachments downloaded locally
+  attachments_size_bytes - Size of downloaded attachments
+  sync_email_since      - Configured email sync cutoff (ISO 8601, may be null)
+  sync_attachments      - Whether attachment download is enabled (boolean)
+
+IMPORTANT:
+  - oldest_email shows actual data range, sync_email_since shows configured limit
+  - If oldest_email > sync_email_since, historical sync may still be in progress
+  - Check last_email_sync to see when sync last ran
+
+EXAMPLES:
+  groundeffect sync status
+  groundeffect sync status --account user@gmail.com")]
     Status {
-        /// Show status for specific account
+        /// Filter to specific account by email address
         #[arg(long)]
         account: Option<String>,
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
@@ -221,36 +361,80 @@ enum SyncCommands {
 
 #[derive(Subcommand)]
 enum DaemonCommands {
-    /// Check daemon status
+    /// Check if daemon is running. Returns JSON: {running: bool, pid: number|null}.
     Status {
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
-    /// Start the daemon
+    /// Start the background sync daemon. Uses launchd if plist exists, otherwise direct spawn.
+    /// Returns JSON: {status: "started"|"already_running"|"error", method?: "launchd"|"direct"}.
     Start {
-        /// Enable file logging
+        /// Enable file logging (only for direct spawn, not launchd)
         #[arg(long)]
         logging: bool,
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
-    /// Stop the daemon
+    /// Stop the daemon. Returns JSON: {status: "stopped"|"not_running"}.
     Stop {
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
-    /// Restart the daemon
+    /// Restart the daemon (stop then start). Returns JSON: {status: "restarted", method: "launchd"|"direct"}.
     Restart {
-        /// Enable file logging
+        /// Enable file logging (only for direct spawn, not launchd)
         #[arg(long)]
         logging: bool,
-        /// Human-readable output
+        /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
     },
+}
+
+// ============================================================================
+// Config Commands
+// ============================================================================
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Add groundeffect to Claude Code's allowed commands (~/.claude/settings.json).
+    #[command(name = "add-permissions")]
+    #[command(long_about = "Add groundeffect to Claude Code's command allowlist.
+
+This modifies ~/.claude/settings.json to allow Claude Code to run all groundeffect
+commands without prompting for permission each time.
+
+WHAT IT DOES:
+  Adds 'Bash(groundeffect:*)' to the 'allow' list in your Claude Code settings.
+
+FILE MODIFIED:
+  ~/.claude/settings.json
+
+EXAMPLE:
+  groundeffect config add-permissions
+
+After running this, Claude Code can use groundeffect for email/calendar tasks
+without asking for permission on each command.")]
+    AddPermissions,
+    /// Remove groundeffect from Claude Code's allowed commands.
+    #[command(name = "remove-permissions")]
+    #[command(long_about = "Remove groundeffect from Claude Code's command allowlist.
+
+This modifies ~/.claude/settings.json to remove groundeffect from the allowed
+commands, requiring permission prompts again.
+
+WHAT IT DOES:
+  Removes 'Bash(groundeffect:*)' from the 'allow' list in your Claude Code settings.
+
+FILE MODIFIED:
+  ~/.claude/settings.json
+
+EXAMPLE:
+  groundeffect config remove-permissions")]
+    RemovePermissions,
 }
 
 // ============================================================================
@@ -420,6 +604,8 @@ struct SyncStatus {
     attachments_total: usize,
     attachments_downloaded: usize,
     attachments_size_bytes: u64,
+    sync_email_since: Option<String>,
+    sync_attachments: bool,
 }
 
 #[derive(Serialize)]
@@ -443,6 +629,7 @@ async fn main() -> Result<()> {
         Commands::Account { command } => handle_account_command(command, global_human).await,
         Commands::Sync { command } => handle_sync_command(command, global_human).await,
         Commands::Daemon { command } => handle_daemon_command(command, global_human).await,
+        Commands::Config { command } => handle_config_command(command).await,
     }
 }
 
@@ -899,6 +1086,13 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
                             println!("Display name: {}", acct.display_name);
                             println!("Status: {:?}", acct.status);
                             println!("Added: {}", acct.added_at.format("%Y-%m-%d"));
+                            println!("\n⚙️  Settings:");
+                            if let Some(since) = acct.sync_email_since {
+                                println!("  Sync emails since: {}", since.format("%Y-%m-%d"));
+                            } else {
+                                println!("  Sync emails since: (default)");
+                            }
+                            println!("  Sync attachments: {}", if acct.sync_attachments { "enabled" } else { "disabled" });
                             println!("\n📊 Stats:");
                             println!("  Emails: {}", email_count);
                             println!("  Events: {}", event_count);
@@ -924,6 +1118,8 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
                                 attachments_size_bytes: u64,
                                 last_sync_email: Option<String>,
                                 last_sync_calendar: Option<String>,
+                                sync_email_since: Option<String>,
+                                sync_attachments: bool,
                             }
                             let detail = AccountDetail {
                                 email: acct.id.clone(),
@@ -938,6 +1134,8 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
                                 attachments_size_bytes: att_size,
                                 last_sync_email: acct.last_sync_email.map(|d| d.to_rfc3339()),
                                 last_sync_calendar: acct.last_sync_calendar.map(|d| d.to_rfc3339()),
+                                sync_email_since: acct.sync_email_since.map(|d| d.to_rfc3339()),
+                                sync_attachments: acct.sync_attachments,
                             };
                             println!("{}", serde_json::to_string_pretty(&detail)?);
                         }
@@ -1020,6 +1218,8 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
                     attachments_total: att_total,
                     attachments_downloaded: att_downloaded,
                     attachments_size_bytes: att_size,
+                    sync_email_since: account.sync_email_since.map(|d| d.to_rfc3339()),
+                    sync_attachments: account.sync_attachments,
                 };
 
                 if human {
@@ -1032,6 +1232,9 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
                     let alias = account.alias.as_ref().map(|a| format!(" ({})", a)).unwrap_or_default();
                     println!("{}  {}{}", status_icon, account.id, alias);
                     println!("   Status: {:?}", account.status);
+                    if let Some(since) = account.sync_email_since {
+                        println!("   ⚙️  Sync since: {}", since.format("%Y-%m-%d"));
+                    }
                     println!("   📨 Emails: {}", email_count);
                     if let Some(oldest) = &status.oldest_email {
                         println!("      Oldest: {}", oldest);
@@ -1052,8 +1255,9 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
                     if let Some(last) = account.last_sync_calendar {
                         println!("      Last sync: {}", format_relative_time(last));
                     }
-                    if att_total > 0 {
-                        println!("   📎 Attachments: {}/{} downloaded ({})", att_downloaded, att_total, format_bytes(att_size));
+                    println!("   📎 Attachments: {}/{} downloaded ({})", att_downloaded, att_total, format_bytes(att_size));
+                    if account.sync_attachments {
+                        println!("      Auto-download: enabled");
                     }
                     println!();
                 }
@@ -1289,4 +1493,105 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
+}
+
+// ============================================================================
+// Config Command Handlers
+// ============================================================================
+
+async fn handle_config_command(command: ConfigCommands) -> Result<()> {
+    match command {
+        ConfigCommands::AddPermissions => config_add_permissions().await,
+        ConfigCommands::RemovePermissions => config_remove_permissions().await,
+    }
+}
+
+async fn config_add_permissions() -> Result<()> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
+    let settings_path = PathBuf::from(&home).join(".claude").join("settings.json");
+
+    let permission = "Bash(groundeffect:*)";
+
+    // Read existing settings or create new structure
+    let mut settings: serde_json::Value = if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path)?;
+        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        if let Some(parent) = settings_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        serde_json::json!({})
+    };
+
+    // Ensure permissions.allow array exists
+    if settings.get("permissions").is_none() {
+        settings["permissions"] = serde_json::json!({});
+    }
+    if settings["permissions"].get("allow").is_none() {
+        settings["permissions"]["allow"] = serde_json::json!([]);
+    }
+
+    let allow_list = settings["permissions"]["allow"].as_array_mut()
+        .ok_or_else(|| anyhow::anyhow!("permissions.allow is not an array"))?;
+
+    if allow_list.iter().any(|v| v.as_str() == Some(permission)) {
+        println!("✓ groundeffect already in Claude Code allowlist");
+        println!("  {}", settings_path.display());
+        return Ok(());
+    }
+
+    allow_list.push(serde_json::json!(permission));
+
+    let content = serde_json::to_string_pretty(&settings)?;
+    fs::write(&settings_path, content)?;
+
+    println!("✓ Added groundeffect to Claude Code allowlist");
+    println!("  {}", settings_path.display());
+
+    Ok(())
+}
+
+async fn config_remove_permissions() -> Result<()> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
+    let settings_path = PathBuf::from(&home).join(".claude").join("settings.json");
+
+    if !settings_path.exists() {
+        println!("No Claude Code settings file found");
+        println!("  {}", settings_path.display());
+        return Ok(());
+    }
+
+    let permission = "Bash(groundeffect:*)";
+
+    let content = fs::read_to_string(&settings_path)?;
+    let mut settings: serde_json::Value = serde_json::from_str(&content)?;
+
+    let removed = if let Some(allow_list) = settings.get_mut("permissions")
+        .and_then(|p| p.get_mut("allow"))
+        .and_then(|a| a.as_array_mut())
+    {
+        let initial_len = allow_list.len();
+        allow_list.retain(|v| v.as_str() != Some(permission));
+        allow_list.len() < initial_len
+    } else {
+        false
+    };
+
+    if removed {
+        let content = serde_json::to_string_pretty(&settings)?;
+        fs::write(&settings_path, content)?;
+        println!("✓ Removed groundeffect from Claude Code allowlist");
+        println!("  {}", settings_path.display());
+    } else {
+        println!("groundeffect not in Claude Code allowlist");
+        println!("  {}", settings_path.display());
+    }
+
+    Ok(())
 }

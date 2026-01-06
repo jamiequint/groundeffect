@@ -1,11 +1,11 @@
 # Account Commands Reference
 
-## ge account list
+## groundeffect account list
 
 List all connected Gmail/Google Calendar accounts.
 
 ```bash
-ge account list [options]
+groundeffect account list [options]
 ```
 
 ### Options
@@ -25,20 +25,20 @@ ge account list [options]
 ### Examples
 ```bash
 # List all accounts
-ge account list
+groundeffect account list
 
 # List with human-readable format
-ge account list --human
+groundeffect account list --human
 ```
 
 ---
 
-## ge account show
+## groundeffect account show
 
 Show details for a specific account.
 
 ```bash
-ge account show <email|alias> [options]
+groundeffect account show <email|alias> [options]
 ```
 
 ### Options
@@ -49,20 +49,20 @@ ge account show <email|alias> [options]
 ### Examples
 ```bash
 # Show by email
-ge account show user@gmail.com
+groundeffect account show user@gmail.com
 
 # Show by alias
-ge account show work --human
+groundeffect account show work --human
 ```
 
 ---
 
-## ge account add
+## groundeffect account add
 
 Add a new Google account via OAuth flow.
 
 ```bash
-ge account add [options]
+groundeffect account add [options]
 ```
 
 ### Options
@@ -81,23 +81,23 @@ ge account add [options]
 ### Examples
 ```bash
 # Add account with prompts
-ge account add
+groundeffect account add
 
 # Add with alias and sync 3 years
-ge account add --alias work --years 3
+groundeffect account add --alias work --years 3
 
 # Add and sync all available history
-ge account add --alias archive --years all
+groundeffect account add --alias archive --years all
 ```
 
 ---
 
-## ge account delete
+## groundeffect account delete
 
 Remove an account and all associated synced data.
 
 ```bash
-ge account delete <email|alias> --confirm [options]
+groundeffect account delete <email|alias> --confirm [options]
 ```
 
 ### Options
@@ -115,20 +115,20 @@ ge account delete <email|alias> --confirm [options]
 ### Examples
 ```bash
 # Delete account (requires --confirm)
-ge account delete old@gmail.com --confirm
+groundeffect account delete old@gmail.com --confirm
 
 # Delete by alias
-ge account delete old-work --confirm
+groundeffect account delete old-work --confirm
 ```
 
 ---
 
-## ge account configure
+## groundeffect account configure
 
 Update settings for an existing account.
 
 ```bash
-ge account configure <email|alias> [options]
+groundeffect account configure <email|alias> [options]
 ```
 
 ### Options
@@ -148,20 +148,20 @@ ge account configure <email|alias> [options]
 ### Examples
 ```bash
 # Set alias
-ge account configure user@gmail.com --alias personal
+groundeffect account configure user@gmail.com --alias personal
 
 # Disable calendar sync
-ge account configure work --sync-calendar false
+groundeffect account configure work --sync-calendar false
 
 # Enable attachment downloads
-ge account configure work --sync-attachments true
+groundeffect account configure work --sync-attachments true
 
 # Sync only specific folders
-ge account configure personal --folders "INBOX,Sent,Important"
+groundeffect account configure personal --folders "INBOX,Sent,Important"
 
 # Reset to sync all folders
-ge account configure personal --folders ""
+groundeffect account configure personal --folders ""
 
 # Remove alias
-ge account configure user@gmail.com --alias ""
+groundeffect account configure user@gmail.com --alias ""
 ```

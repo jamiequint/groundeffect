@@ -38,6 +38,14 @@ This will:
 1. Configure daemon settings interactively
 2. Install a launchd agent for auto-start at login
 
+Then allow Claude Code to run groundeffect commands without permission prompts:
+
+```bash
+groundeffect config add-permissions
+```
+
+This adds `Bash(groundeffect:*)` to `~/.claude/settings.json`. To remove later: `groundeffect config remove-permissions`.
+
 ### Option B: Build from source
 
 ```bash
@@ -80,32 +88,28 @@ Use MCP if you want to use GroundEffect with other MCP-compatible clients (Curso
 
 The skill teaches Claude Code how to use the `groundeffect` CLI directly.
 
-**Global installation** (available in all projects):
 ```bash
-# Create global skills directory
-mkdir -p ~/.claude/skills
+# Download the skill (no need to clone the repo)
+mkdir -p ~/.claude/skills/groundeffect/{references,examples}
+cd ~/.claude/skills/groundeffect
+curl -sLO https://raw.githubusercontent.com/jamiequint/groundeffect/main/skill/SKILL.md
+curl -sL https://raw.githubusercontent.com/jamiequint/groundeffect/main/skill/references/email-commands.md -o references/email-commands.md
+curl -sL https://raw.githubusercontent.com/jamiequint/groundeffect/main/skill/references/calendar-commands.md -o references/calendar-commands.md
+curl -sL https://raw.githubusercontent.com/jamiequint/groundeffect/main/skill/references/account-commands.md -o references/account-commands.md
+curl -sL https://raw.githubusercontent.com/jamiequint/groundeffect/main/skill/references/sync-commands.md -o references/sync-commands.md
+curl -sL https://raw.githubusercontent.com/jamiequint/groundeffect/main/skill/references/daemon-commands.md -o references/daemon-commands.md
+curl -sL https://raw.githubusercontent.com/jamiequint/groundeffect/main/skill/examples/common-workflows.md -o examples/common-workflows.md
+```
 
-# Clone and copy the skill
-git clone https://github.com/jamiequint/groundeffect.git /tmp/groundeffect
+Or clone just the skill folder:
+```bash
+git clone --depth 1 --filter=blob:none --sparse https://github.com/jamiequint/groundeffect.git /tmp/groundeffect
+cd /tmp/groundeffect && git sparse-checkout set skill
 cp -r /tmp/groundeffect/skill ~/.claude/skills/groundeffect
-
-# Or if you have groundeffect cloned locally:
-cp -r /path/to/groundeffect/skill ~/.claude/skills/groundeffect
+rm -rf /tmp/groundeffect
 ```
 
-**Project-level installation** (available only in specific project):
-```bash
-# From your project root
-mkdir -p .claude/skills
-
-# Copy skill into project
-cp -r /path/to/groundeffect/skill .claude/skills/groundeffect
-
-# Optionally add to .gitignore if you don't want to commit it
-echo ".claude/skills/" >> .gitignore
-```
-
-The skill is now active. Claude Code will automatically use `groundeffect` (or `ge`) CLI commands for email and calendar tasks.
+The skill is now active. Claude Code will automatically use `groundeffect` CLI commands for email and calendar tasks.
 
 #### Option B: Set up MCP Server
 

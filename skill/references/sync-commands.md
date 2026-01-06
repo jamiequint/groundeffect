@@ -1,11 +1,11 @@
 # Sync Commands Reference
 
-## ge sync status
+## groundeffect sync status
 
 Show synchronization status and statistics.
 
 ```bash
-ge sync status [options]
+groundeffect sync status [options]
 ```
 
 ### Options
@@ -31,20 +31,20 @@ ge sync status [options]
 ### Examples
 ```bash
 # Show status for all accounts
-ge sync status
+groundeffect sync status
 
 # Show status for specific account
-ge sync status --account work --human
+groundeffect sync status --account work --human
 ```
 
 ---
 
-## ge sync reset
+## groundeffect sync reset
 
 Clear synced data and reset sync state. Requires confirmation.
 
 ```bash
-ge sync reset <email|alias> --confirm [options]
+groundeffect sync reset <email|alias> --confirm [options]
 ```
 
 ### Options
@@ -67,23 +67,23 @@ ge sync reset <email|alias> --confirm [options]
 ### Examples
 ```bash
 # Reset all data for an account
-ge sync reset work --confirm
+groundeffect sync reset work --confirm
 
 # Reset only email data
-ge sync reset personal --type email --confirm
+groundeffect sync reset personal --type email --confirm
 
 # Reset only calendar data
-ge sync reset work --type calendar --confirm
+groundeffect sync reset work --type calendar --confirm
 ```
 
 ---
 
-## ge sync extend
+## groundeffect sync extend
 
 Expand sync range to include older data.
 
 ```bash
-ge sync extend <email|alias> --target-date YYYY-MM-DD [options]
+groundeffect sync extend <email|alias> --target-date YYYY-MM-DD [options]
 ```
 
 ### Options
@@ -100,20 +100,20 @@ ge sync extend <email|alias> --target-date YYYY-MM-DD [options]
 ### Examples
 ```bash
 # Extend sync to include 2020 data
-ge sync extend work --target-date 2020-01-01
+groundeffect sync extend work --target-date 2020-01-01
 
 # Extend personal account
-ge sync extend personal --target-date 2019-06-15 --human
+groundeffect sync extend personal --target-date 2019-06-15 --human
 ```
 
 ---
 
-## ge sync download-attachments
+## groundeffect sync download-attachments
 
 Retroactively download attachments for already-synced emails.
 
 ```bash
-ge sync download-attachments <email|alias> [options]
+groundeffect sync download-attachments <email|alias> [options]
 ```
 
 ### Options
@@ -130,8 +130,8 @@ ge sync download-attachments <email|alias> [options]
 ### Examples
 ```bash
 # Download all pending attachments
-ge sync download-attachments work
+groundeffect sync download-attachments work
 
 # With human-readable output
-ge sync download-attachments personal --human
+groundeffect sync download-attachments personal --human
 ```

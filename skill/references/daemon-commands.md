@@ -2,12 +2,12 @@
 
 The GroundEffect daemon runs in the background to continuously sync email and calendar data.
 
-## ge daemon status
+## groundeffect daemon status
 
 Check if the sync daemon is running.
 
 ```bash
-ge daemon status [options]
+groundeffect daemon status [options]
 ```
 
 ### Options
@@ -26,20 +26,20 @@ ge daemon status [options]
 ### Examples
 ```bash
 # Check daemon status
-ge daemon status
+groundeffect daemon status
 
 # Human-readable output
-ge daemon status --human
+groundeffect daemon status --human
 ```
 
 ---
 
-## ge daemon start
+## groundeffect daemon start
 
 Start the background sync daemon.
 
 ```bash
-ge daemon start [options]
+groundeffect daemon start [options]
 ```
 
 ### Options
@@ -60,26 +60,26 @@ ge daemon start [options]
 ### Examples
 ```bash
 # Start with defaults
-ge daemon start
+groundeffect daemon start
 
 # Start with logging enabled
-ge daemon start --logging
+groundeffect daemon start --logging
 
 # Start with custom sync intervals
-ge daemon start --email-poll 600 --calendar-poll 900
+groundeffect daemon start --email-poll 600 --calendar-poll 900
 
 # Start with all options
-ge daemon start --logging --email-poll 120 --calendar-poll 300 --max-concurrent 5
+groundeffect daemon start --logging --email-poll 120 --calendar-poll 300 --max-concurrent 5
 ```
 
 ---
 
-## ge daemon stop
+## groundeffect daemon stop
 
 Gracefully stop the sync daemon.
 
 ```bash
-ge daemon stop [options]
+groundeffect daemon stop [options]
 ```
 
 ### Options
@@ -95,20 +95,20 @@ ge daemon stop [options]
 ### Examples
 ```bash
 # Stop the daemon
-ge daemon stop
+groundeffect daemon stop
 
 # Stop with human-readable output
-ge daemon stop --human
+groundeffect daemon stop --human
 ```
 
 ---
 
-## ge daemon restart
+## groundeffect daemon restart
 
 Stop and restart the daemon with new settings.
 
 ```bash
-ge daemon restart [options]
+groundeffect daemon restart [options]
 ```
 
 ### Options
@@ -128,11 +128,11 @@ ge daemon restart [options]
 ### Examples
 ```bash
 # Restart with defaults
-ge daemon restart
+groundeffect daemon restart
 
 # Restart with new settings
-ge daemon restart --email-poll 60 --logging
+groundeffect daemon restart --email-poll 60 --logging
 
 # Full reconfiguration
-ge daemon restart --logging --email-poll 180 --calendar-poll 600 --max-concurrent 15
+groundeffect daemon restart --logging --email-poll 180 --calendar-poll 600 --max-concurrent 15
 ```

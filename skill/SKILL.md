@@ -4,7 +4,7 @@ description: |
   Use this skill when the user asks about email, calendar, or Gmail/Google Calendar
   management via GroundEffect CLI. Triggers include: "search my email", "list recent emails",
   "check my calendar", "create a calendar event", "manage groundeffect accounts",
-  "sync status", "start the daemon", "groundeffect", "ge command".
+  "sync status", "start the daemon", "groundeffect", "groundeffect command".
 version: 1.0.0
 ---
 
@@ -16,51 +16,51 @@ GroundEffect provides local-first email and calendar management with semantic se
 
 ### Email Commands
 ```bash
-ge email search "query"              # Search emails with natural language
-ge email list                        # List recent emails
-ge email show <id>                   # Show single email
-ge email thread <thread_id>          # Show email thread
-ge email send --to X --subject "X" --body "X"  # Send email
-ge email attachment <email_id> <filename>      # Get attachment
-ge email folders                     # List IMAP folders
+groundeffect email search "query"              # Search emails with natural language
+groundeffect email list                        # List recent emails
+groundeffect email show <id>                   # Show single email
+groundeffect email thread <thread_id>          # Show email thread
+groundeffect email send --to X --subject "X" --body "X"  # Send email
+groundeffect email attachment <email_id> <filename>      # Get attachment
+groundeffect email folders                     # List IMAP folders
 ```
 
 ### Calendar Commands
 ```bash
-ge calendar search "query"           # Search events
-ge calendar list                     # List calendars
-ge calendar show <event_id>          # Show event details
-ge calendar create --summary "X" --start "ISO" --end "ISO"  # Create event
+groundeffect calendar search "query"           # Search events
+groundeffect calendar list                     # List calendars
+groundeffect calendar show <event_id>          # Show event details
+groundeffect calendar create --summary "X" --start "ISO" --end "ISO"  # Create event
 ```
 
 ### Account Commands
 ```bash
-ge account list                      # List all accounts
-ge account show <email|alias>        # Show account details
-ge account add                       # Add new Google account
-ge account delete <email|alias>      # Remove account
-ge account configure <email|alias>   # Update settings
+groundeffect account list                      # List all accounts
+groundeffect account show <email|alias>        # Show account details
+groundeffect account add                       # Add new Google account
+groundeffect account delete <email|alias>      # Remove account
+groundeffect account configure <email|alias>   # Update settings
 ```
 
 ### Sync Commands
 ```bash
-ge sync status                       # Check sync status
-ge sync reset <email|alias>          # Reset synced data
-ge sync extend <email|alias>         # Sync older emails
-ge sync download-attachments <email|alias>  # Download pending attachments
+groundeffect sync status                       # Check sync status
+groundeffect sync reset <email|alias>          # Reset synced data
+groundeffect sync extend <email|alias>         # Sync older emails
+groundeffect sync download-attachments <email|alias>  # Download pending attachments
 ```
 
 ### Daemon Commands
 ```bash
-ge daemon status                     # Check if daemon running
-ge daemon start                      # Start sync daemon
-ge daemon stop                       # Stop sync daemon
-ge daemon restart                    # Restart daemon
+groundeffect daemon status                     # Check if daemon running
+groundeffect daemon start                      # Start sync daemon
+groundeffect daemon stop                       # Stop sync daemon
+groundeffect daemon restart                    # Restart daemon
 ```
 
 ## Usage Notes
 
-- **CLI binary**: `groundeffect` (or `ge` alias)
+- **CLI binary**: `groundeffect` 
 - **Output format**: JSON by default, use `--human` for readable output
 - **Date format**: Use YYYY-MM-DD for date parameters
 - **Account references**: Use email address or alias interchangeably

@@ -1,11 +1,11 @@
 # Calendar Commands Reference
 
-## ge calendar search
+## groundeffect calendar search
 
 Search calendar events using natural language.
 
 ```bash
-ge calendar search "query" [options]
+groundeffect calendar search "query" [options]
 ```
 
 ### Options
@@ -21,23 +21,23 @@ ge calendar search "query" [options]
 ### Examples
 ```bash
 # Search for meetings this week
-ge calendar search "team meeting" --after 2024-01-08 --before 2024-01-15
+groundeffect calendar search "team meeting" --after 2024-01-08 --before 2024-01-15
 
 # Find all events with a specific person
-ge calendar search "with John" --limit 20
+groundeffect calendar search "with John" --limit 20
 
 # Search specific calendar
-ge calendar search "standup" --calendar team-calendar --account work
+groundeffect calendar search "standup" --calendar team-calendar --account work
 ```
 
 ---
 
-## ge calendar list
+## groundeffect calendar list
 
 List all available calendars.
 
 ```bash
-ge calendar list [options]
+groundeffect calendar list [options]
 ```
 
 ### Options
@@ -55,20 +55,20 @@ ge calendar list [options]
 ### Examples
 ```bash
 # List all calendars across all accounts
-ge calendar list
+groundeffect calendar list
 
 # List calendars for specific account
-ge calendar list --account work --human
+groundeffect calendar list --account work --human
 ```
 
 ---
 
-## ge calendar show
+## groundeffect calendar show
 
 Fetch a single calendar event by ID.
 
 ```bash
-ge calendar show <event_id> [options]
+groundeffect calendar show <event_id> [options]
 ```
 
 ### Options
@@ -90,20 +90,20 @@ ge calendar show <event_id> [options]
 ### Examples
 ```bash
 # Show event details
-ge calendar show event_abc123
+groundeffect calendar show event_abc123
 
 # Show with human-readable format
-ge calendar show event_abc123 --human
+groundeffect calendar show event_abc123 --human
 ```
 
 ---
 
-## ge calendar create
+## groundeffect calendar create
 
 Create a new calendar event.
 
 ```bash
-ge calendar create [options]
+groundeffect calendar create [options]
 ```
 
 ### Options
@@ -128,13 +128,13 @@ Use ISO 8601 format for start and end times:
 ### Examples
 ```bash
 # Create simple event
-ge calendar create \
+groundeffect calendar create \
   --summary "Team Standup" \
   --start "2024-01-15T09:00:00" \
   --end "2024-01-15T09:30:00"
 
 # Create event with attendees and location
-ge calendar create \
+groundeffect calendar create \
   --summary "Project Review" \
   --start "2024-01-15T14:00:00-08:00" \
   --end "2024-01-15T15:00:00-08:00" \
@@ -143,7 +143,7 @@ ge calendar create \
   --description "Q1 project progress review"
 
 # Create on specific calendar
-ge calendar create \
+groundeffect calendar create \
   --summary "Personal Appointment" \
   --start "2024-01-16T10:00:00" \
   --end "2024-01-16T11:00:00" \
