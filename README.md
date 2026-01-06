@@ -1,6 +1,6 @@
 # GroundEffect
 
-Hyper-fast, private email and calendar indexing for Claude Code. 
+Hyper-fast, private Gmail and Google Calendar indexing for Claude Code. 
 
 GroundEffect is a local headless IMAP/CalDav client and MCP Server for Claude Code built in Rust with LanceDB.
 
