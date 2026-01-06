@@ -1516,11 +1516,24 @@ Content-Type: text/html; charset=utf-8
                     .collect::<Vec<_>>()
             });
 
+        // Parse date filters (format: YYYY-MM-DD)
+        let date_from = args["date_from"].as_str().and_then(|s| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .map(|d| d.and_time(NaiveTime::MIN).and_utc())
+        });
+        let date_to = args["date_to"].as_str().and_then(|s| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .map(|d| d.and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap()).and_utc())
+        });
+
         let options = CalendarSearchOptions {
             accounts,
             limit,
             calendar_id: args["calendar_id"].as_str().map(|s| s.to_string()),
-            ..Default::default()
+            date_from,
+            date_to,
         };
 
         let start = std::time::Instant::now();
