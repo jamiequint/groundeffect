@@ -124,7 +124,7 @@ groundeffect email thread 18abc123def --human
 
 ## groundeffect email send
 
-Compose and send an email. Uses preview workflow by default.
+Compose and send an email. Uses preview workflow by default. Supports HTML emails with automatic content detection.
 
 ```bash
 groundeffect email send [options]
@@ -135,12 +135,20 @@ groundeffect email send [options]
 |------|-------------|----------|
 | `--to` | Recipient email address(es) | Yes |
 | `--subject` | Email subject line | Yes |
-| `--body` | Email body (plain text) | Yes |
+| `--body` | Email body (plain text or HTML) | Yes |
 | `--cc` | CC recipient(s) | No |
 | `--bcc` | BCC recipient(s) | No |
 | `--from-account` | Account to send from | No (uses default) |
 | `--reply-to` | Email ID to reply to (for threading) | No |
+| `--html` | Force HTML email mode | No |
+| `--save-as-draft` | Save as draft instead of sending | No |
 | `--confirm` | Send immediately without preview | No |
+
+### HTML Email Support
+- **Auto-detection**: Content is automatically detected as HTML if it contains HTML tags, markdown links, or URLs
+- **Markdown conversion**: Markdown-style formatting (links, bold, italic) is converted to HTML
+- **Multipart format**: HTML emails are sent as multipart/alternative with plain text fallback
+- **Force HTML**: Use `--html` flag to ensure HTML processing even for simple content
 
 ### Examples
 ```bash
@@ -149,6 +157,18 @@ groundeffect email send --to "recipient@example.com" --subject "Hello" --body "M
 
 # Send immediately without preview
 groundeffect email send --to "recipient@example.com" --subject "Quick note" --body "Content" --confirm
+
+# Send HTML email (auto-detected from content)
+groundeffect email send --to "recipient@example.com" --subject "Report" --body "<h1>Monthly Report</h1><p>Here are the details...</p>" --confirm
+
+# Send with markdown links (auto-converted to HTML)
+groundeffect email send --to "recipient@example.com" --subject "Links" --body "Check out [this link](https://example.com)" --confirm
+
+# Force HTML mode
+groundeffect email send --to "recipient@example.com" --subject "Update" --body "Simple text" --html --confirm
+
+# Save as draft instead of sending
+groundeffect email send --to "recipient@example.com" --subject "Draft" --body "Work in progress" --save-as-draft
 
 # Reply to existing email
 groundeffect email send --to "sender@example.com" --subject "Re: Topic" --body "Reply content" --reply-to abc123
@@ -209,4 +229,168 @@ groundeffect email folders
 
 # List folders for specific account
 groundeffect email folders --account personal
+```
+
+---
+
+## groundeffect email draft create
+
+Create a new email draft.
+
+```bash
+groundeffect email draft create [options]
+```
+
+### Options
+| Flag | Description | Required |
+|------|-------------|----------|
+| `--from-account` | Account to create draft in | Yes |
+| `--to` | Recipient email address(es) | No |
+| `--subject` | Email subject line | No |
+| `--body` | Email body (plain text or HTML) | No |
+| `--cc` | CC recipient(s) | No |
+| `--bcc` | BCC recipient(s) | No |
+| `--html` | Force HTML email mode | No |
+| `--reply-to` | Email ID to reply to (for threading) | No |
+| `--human` | Human-readable output | No |
+
+### Examples
+```bash
+# Create a simple draft
+groundeffect email draft create --from-account work --to "recipient@example.com" --subject "Draft email" --body "Working on this..."
+
+# Create an HTML draft
+groundeffect email draft create --from-account work --to "team@example.com" --subject "Report" --body "<h1>Report</h1>" --html
+
+# Create a draft reply
+groundeffect email draft create --from-account work --to "sender@example.com" --subject "Re: Topic" --body "Reply draft" --reply-to abc123
+```
+
+---
+
+## groundeffect email draft list
+
+List email drafts for an account.
+
+```bash
+groundeffect email draft list [options]
+```
+
+### Options
+| Flag | Description | Required |
+|------|-------------|----------|
+| `--from-account` | Account to list drafts from | Yes |
+| `--limit` | Number of drafts (default 20) | No |
+| `--human` | Human-readable output | No |
+
+### Examples
+```bash
+# List drafts from work account
+groundeffect email draft list --from-account work
+
+# List more drafts with human-readable output
+groundeffect email draft list --from-account work --limit 50 --human
+```
+
+---
+
+## groundeffect email draft show
+
+Get details of a specific draft.
+
+```bash
+groundeffect email draft show <draft_id> [options]
+```
+
+### Options
+| Flag | Description | Required |
+|------|-------------|----------|
+| `--from-account` | Account the draft belongs to | Yes |
+| `--human` | Human-readable output | No |
+
+### Examples
+```bash
+# Show draft details
+groundeffect email draft show r123456789 --from-account work
+
+# Show in human-readable format
+groundeffect email draft show r123456789 --from-account work --human
+```
+
+---
+
+## groundeffect email draft update
+
+Update an existing draft.
+
+```bash
+groundeffect email draft update <draft_id> [options]
+```
+
+### Options
+| Flag | Description | Required |
+|------|-------------|----------|
+| `--from-account` | Account the draft belongs to | Yes |
+| `--to` | Update recipient(s) | No |
+| `--subject` | Update subject line | No |
+| `--body` | Update body content | No |
+| `--cc` | Update CC recipient(s) | No |
+| `--bcc` | Update BCC recipient(s) | No |
+| `--html` | Force HTML email mode | No |
+| `--human` | Human-readable output | No |
+
+### Examples
+```bash
+# Update draft subject and body
+groundeffect email draft update r123456789 --from-account work --subject "Updated Subject" --body "New content"
+
+# Add CC to existing draft
+groundeffect email draft update r123456789 --from-account work --cc "copy@example.com"
+```
+
+---
+
+## groundeffect email draft send
+
+Send an existing draft.
+
+```bash
+groundeffect email draft send <draft_id> [options]
+```
+
+### Options
+| Flag | Description | Required |
+|------|-------------|----------|
+| `--from-account` | Account the draft belongs to | Yes |
+| `--human` | Human-readable output | No |
+
+### Examples
+```bash
+# Send a draft
+groundeffect email draft send r123456789 --from-account work
+
+# Send with human-readable output
+groundeffect email draft send r123456789 --from-account work --human
+```
+
+---
+
+## groundeffect email draft delete
+
+Delete a draft.
+
+```bash
+groundeffect email draft delete <draft_id> [options]
+```
+
+### Options
+| Flag | Description | Required |
+|------|-------------|----------|
+| `--from-account` | Account the draft belongs to | Yes |
+| `--human` | Human-readable output | No |
+
+### Examples
+```bash
+# Delete a draft
+groundeffect email draft delete r123456789 --from-account work
 ```

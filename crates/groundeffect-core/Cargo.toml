@@ -61,6 +61,7 @@ url = { workspace = true }
 open = { workspace = true }
 urlencoding = { workspace = true }
 html2text = { workspace = true }
+regex = { workspace = true }
 
 [features]
 default = ["metal"]

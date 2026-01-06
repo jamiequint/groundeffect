@@ -21,8 +21,20 @@ groundeffect email list                        # List recent emails
 groundeffect email show <id>                   # Show single email
 groundeffect email thread <thread_id>          # Show email thread
 groundeffect email send --to X --subject "X" --body "X"  # Send email
+groundeffect email send --to X --subject "X" --body "X" --html  # Send HTML email
+groundeffect email send --to X --subject "X" --body "X" --save-as-draft  # Save as draft
 groundeffect email attachment <email_id> <filename>      # Get attachment
 groundeffect email folders                     # List IMAP folders
+```
+
+### Draft Commands
+```bash
+groundeffect email draft create --from-account X --to X --subject "X" --body "X"  # Create draft
+groundeffect email draft list --from-account X           # List drafts
+groundeffect email draft show <id> --from-account X      # Show draft
+groundeffect email draft update <id> --from-account X --body "X"  # Update draft
+groundeffect email draft send <id> --from-account X      # Send draft
+groundeffect email draft delete <id> --from-account X    # Delete draft
 ```
 
 ### Calendar Commands
@@ -52,10 +64,17 @@ groundeffect sync download-attachments <email|alias>  # Download pending attachm
 
 ### Daemon Commands
 ```bash
+groundeffect daemon install                    # Install launchd daemon (auto-start at login)
+groundeffect daemon uninstall                  # Remove launchd daemon
 groundeffect daemon status                     # Check if daemon running
-groundeffect daemon start                      # Start sync daemon
-groundeffect daemon stop                       # Stop sync daemon
 groundeffect daemon restart                    # Restart daemon
+```
+
+### Config Commands
+```bash
+groundeffect config settings                   # View/modify daemon settings
+groundeffect config add-permissions            # Add Claude Code permissions
+groundeffect config remove-permissions         # Remove Claude Code permissions
 ```
 
 ## Usage Notes
@@ -70,11 +89,12 @@ groundeffect daemon restart                    # Restart daemon
 
 For complete command documentation with all flags and examples, read the appropriate reference file:
 
-- **Email**: `references/email-commands.md` - search, list, show, thread, send, attachment, folders
+- **Email**: `references/email-commands.md` - search, list, show, thread, send (HTML support), attachment, folders, drafts
 - **Calendar**: `references/calendar-commands.md` - search, list, show, create
 - **Accounts**: `references/account-commands.md` - list, show, add, delete, configure
 - **Sync**: `references/sync-commands.md` - status, reset, extend, download-attachments
-- **Daemon**: `references/daemon-commands.md` - status, start, stop, restart
+- **Daemon**: `references/daemon-commands.md` - install, uninstall, status, restart
+- **Config**: `references/config-commands.md` - settings, add-permissions, remove-permissions
 
 ## Common Workflows
 

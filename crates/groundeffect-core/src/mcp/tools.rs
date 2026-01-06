@@ -180,7 +180,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "send_email".to_string(),
-            description: "Compose and send an email. By default returns a preview for user confirmation. Set confirm=true after user approves to actually send.".to_string(),
+            description: "Compose and send an email. By default returns a preview for user confirmation. Set confirm=true to send, or save_as_draft=true to save as draft. Supports HTML via explicit flag or auto-detection of markdown links, plain URLs, bold/italic markdown, or HTML tags.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -199,7 +199,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "body": {
                         "type": "string",
-                        "description": "Email body (plain text)"
+                        "description": "Email body (plain text, markdown, or HTML)"
                     },
                     "cc": {
                         "type": "array",
@@ -214,6 +214,14 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     "reply_to_id": {
                         "type": "string",
                         "description": "Email ID to reply to (for threading)"
+                    },
+                    "html": {
+                        "type": "boolean",
+                        "description": "Force HTML format. If false, auto-detects based on content (markdown links, URLs, bold/italic, HTML tags)."
+                    },
+                    "save_as_draft": {
+                        "type": "boolean",
+                        "description": "Save as draft instead of sending. Returns draft_id. Use send_draft to send later."
                     },
                     "confirm": {
                         "type": "boolean",
@@ -258,6 +266,171 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["email_id"]
+            }),
+        },
+        // Draft tools
+        ToolDefinition {
+            name: "create_draft".to_string(),
+            description: "Create a new email draft directly (no preview/confirm flow). Returns draft_id that can be used with send_draft, get_draft, update_draft, or delete_draft.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "from_account": {
+                        "type": "string",
+                        "description": "Account email or alias to create draft from"
+                    },
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Recipient email addresses"
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Email subject line"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Email body (plain text, markdown, or HTML)"
+                    },
+                    "cc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "CC recipients"
+                    },
+                    "bcc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "BCC recipients"
+                    },
+                    "html": {
+                        "type": "boolean",
+                        "description": "Force HTML format. If false, auto-detects based on content."
+                    },
+                    "reply_to_id": {
+                        "type": "string",
+                        "description": "Email ID to reply to (for threading)"
+                    }
+                },
+                "required": ["from_account", "to", "subject", "body"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_drafts".to_string(),
+            description: "List all email drafts for an account. Drafts are fetched directly from Gmail API (not stored locally).".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string",
+                        "description": "Account email or alias"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "maximum": 100,
+                        "description": "Maximum number of drafts to return"
+                    }
+                },
+                "required": ["account"]
+            }),
+        },
+        ToolDefinition {
+            name: "get_draft".to_string(),
+            description: "Get full content of a specific draft by ID.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string",
+                        "description": "Account email or alias"
+                    },
+                    "draft_id": {
+                        "type": "string",
+                        "description": "Draft ID from list_drafts"
+                    }
+                },
+                "required": ["account", "draft_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "update_draft".to_string(),
+            description: "Update an existing draft. Only provided fields are updated; omitted fields keep their current values.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string",
+                        "description": "Account email or alias"
+                    },
+                    "draft_id": {
+                        "type": "string",
+                        "description": "Draft ID to update"
+                    },
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "New recipient email addresses"
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "New subject line"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "New email body"
+                    },
+                    "cc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "New CC recipients"
+                    },
+                    "bcc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "New BCC recipients"
+                    },
+                    "html": {
+                        "type": "boolean",
+                        "description": "Force HTML format"
+                    }
+                },
+                "required": ["account", "draft_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "send_draft".to_string(),
+            description: "Send an existing draft by ID.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string",
+                        "description": "Account email or alias"
+                    },
+                    "draft_id": {
+                        "type": "string",
+                        "description": "Draft ID to send"
+                    }
+                },
+                "required": ["account", "draft_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "delete_draft".to_string(),
+            description: "Delete an existing draft by ID.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string",
+                        "description": "Account email or alias"
+                    },
+                    "draft_id": {
+                        "type": "string",
+                        "description": "Draft ID to delete"
+                    }
+                },
+                "required": ["account", "draft_id"]
             }),
         },
         // Calendar tools
@@ -441,6 +614,273 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
+// ============================================================================
+// Email Helper Functions
+// ============================================================================
+
+/// Detect if body content should be treated as HTML
+/// Triggers on: markdown links [text](url), plain URLs, bold **text**, italic *text*, HTML tags
+fn detect_html_content(body: &str) -> bool {
+    use regex::Regex;
+
+    // Check for markdown links: [text](url)
+    let md_link = Regex::new(r"\[.+?\]\(.+?\)").unwrap();
+    if md_link.is_match(body) {
+        return true;
+    }
+
+    // Check for plain URLs (http:// or https://)
+    let url_pattern = Regex::new(r"https?://[^\s]+").unwrap();
+    if url_pattern.is_match(body) {
+        return true;
+    }
+
+    // Check for bold: **text** or __text__
+    let bold = Regex::new(r"\*\*.+?\*\*|__.+?__").unwrap();
+    if bold.is_match(body) {
+        return true;
+    }
+
+    // Check for italic: *text* or _text_ (but not if it looks like **bold**)
+    // We need to be careful not to match the inner * of **
+    let italic = Regex::new(r"(?<!\*)\*[^*\n]+?\*(?!\*)").unwrap();
+    if italic.is_match(body) {
+        return true;
+    }
+
+    // Check for HTML tags: <tag>, <tag attr="value">, </tag>
+    let html_tag = Regex::new(r"</?[a-zA-Z][^>]*>").unwrap();
+    if html_tag.is_match(body) {
+        return true;
+    }
+
+    false
+}
+
+/// Convert markdown/plain text to HTML
+fn convert_to_html(body: &str) -> String {
+    use regex::Regex;
+
+    let mut html = body.to_string();
+
+    // Convert markdown links [text](url) to <a href="url">text</a>
+    let md_link = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
+    html = md_link.replace_all(&html, r#"<a href="$2">$1</a>"#).to_string();
+
+    // Convert plain URLs to links (but not if already in an href)
+    // We need to be careful not to double-link URLs that were in markdown links
+    let url_pattern = Regex::new(r#"(?<!")(https?://[^\s<>"]+)"#).unwrap();
+    html = url_pattern.replace_all(&html, r#"<a href="$1">$1</a>"#).to_string();
+
+    // Convert **bold** to <strong>
+    let bold = Regex::new(r"\*\*(.+?)\*\*").unwrap();
+    html = bold.replace_all(&html, r"<strong>$1</strong>").to_string();
+
+    // Convert __bold__ to <strong>
+    let bold2 = Regex::new(r"__(.+?)__").unwrap();
+    html = bold2.replace_all(&html, r"<strong>$1</strong>").to_string();
+
+    // Convert *italic* to <em> (but not ** which was already handled)
+    let italic = Regex::new(r"(?<!\*)\*([^*\n]+?)\*(?!\*)").unwrap();
+    html = italic.replace_all(&html, r"<em>$1</em>").to_string();
+
+    // Convert _italic_ to <em> (but not __ which was already handled)
+    let italic2 = Regex::new(r"(?<!_)_([^_\n]+?)_(?!_)").unwrap();
+    html = italic2.replace_all(&html, r"<em>$1</em>").to_string();
+
+    // Convert newlines to <br>
+    html = html.replace("\n", "<br>\n");
+
+    html
+}
+
+/// Strip HTML tags to create plain text version
+fn strip_html_tags(html: &str) -> String {
+    use regex::Regex;
+
+    let mut text = html.to_string();
+
+    // Convert <br> and <br/> to newlines
+    let br_tag = Regex::new(r"<br\s*/?>").unwrap();
+    text = br_tag.replace_all(&text, "\n").to_string();
+
+    // Convert </p> to double newline
+    text = text.replace("</p>", "\n\n");
+
+    // Extract link text from anchors: <a href="url">text</a> -> text (url)
+    let anchor = Regex::new(r#"<a[^>]+href="([^"]+)"[^>]*>([^<]+)</a>"#).unwrap();
+    text = anchor.replace_all(&text, "$2 ($1)").to_string();
+
+    // Remove all remaining HTML tags
+    let tag = Regex::new(r"<[^>]+>").unwrap();
+    text = tag.replace_all(&text, "").to_string();
+
+    // Collapse multiple newlines
+    let multi_newline = Regex::new(r"\n{3,}").unwrap();
+    text = multi_newline.replace_all(&text, "\n\n").to_string();
+
+    text.trim().to_string()
+}
+
+/// Encode display name for RFC 2047 (handles non-ASCII characters)
+fn encode_display_name(name: &str) -> String {
+    // Check if name contains only ASCII printable characters (excluding special chars)
+    let needs_encoding = name.chars().any(|c| !c.is_ascii() || c == '"' || c == '\\');
+
+    if !needs_encoding {
+        // If the name contains spaces or special chars, quote it
+        if name.contains(' ') || name.contains(',') || name.contains('<') || name.contains('>') {
+            return format!("\"{}\"", name);
+        }
+        return name.to_string();
+    }
+
+    // Use RFC 2047 Base64 encoding for non-ASCII
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let encoded = STANDARD.encode(name.as_bytes());
+    format!("=?UTF-8?B?{}?=", encoded)
+}
+
+/// Build RFC 2822 email message with optional HTML multipart
+fn build_email_message(
+    display_name: &str,
+    from_email: &str,
+    to: &[String],
+    cc: &[String],
+    bcc: &[String],
+    subject: &str,
+    body: &str,
+    is_html: bool,
+    in_reply_to: Option<&str>,
+    references: Option<&str>,
+) -> String {
+    let encoded_name = encode_display_name(display_name);
+    let from_header = format!("{} <{}>", encoded_name, from_email);
+
+    let mut message = format!(
+        "From: {}\r\n\
+         To: {}\r\n",
+        from_header,
+        to.join(", ")
+    );
+
+    if !cc.is_empty() {
+        message.push_str(&format!("Cc: {}\r\n", cc.join(", ")));
+    }
+    if !bcc.is_empty() {
+        message.push_str(&format!("Bcc: {}\r\n", bcc.join(", ")));
+    }
+
+    if let Some(ref msg_id) = in_reply_to {
+        message.push_str(&format!("In-Reply-To: {}\r\n", msg_id));
+    }
+    if let Some(ref refs) = references {
+        message.push_str(&format!("References: {}\r\n", refs));
+    }
+
+    message.push_str(&format!("Subject: {}\r\n", subject));
+    message.push_str("MIME-Version: 1.0\r\n");
+
+    if is_html {
+        // Build multipart/alternative message
+        let boundary = format!("----=_Part_{}", chrono::Utc::now().timestamp_millis());
+
+        let html_body = convert_to_html(body);
+        let plain_body = strip_html_tags(&html_body);
+
+        message.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n\r\n", boundary));
+
+        // Plain text part
+        message.push_str(&format!("--{}\r\n", boundary));
+        message.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+        message.push_str("Content-Transfer-Encoding: 7bit\r\n\r\n");
+        message.push_str(&plain_body);
+        message.push_str("\r\n\r\n");
+
+        // HTML part
+        message.push_str(&format!("--{}\r\n", boundary));
+        message.push_str("Content-Type: text/html; charset=utf-8\r\n");
+        message.push_str("Content-Transfer-Encoding: 7bit\r\n\r\n");
+        message.push_str(&html_body);
+        message.push_str("\r\n\r\n");
+
+        // End boundary
+        message.push_str(&format!("--{}--\r\n", boundary));
+    } else {
+        // Plain text only
+        message.push_str("Content-Type: text/plain; charset=utf-8\r\n\r\n");
+        message.push_str(body);
+    }
+
+    message
+}
+
+/// Parse RFC 2822 email headers and body from raw message
+fn parse_email_headers(raw: &str) -> (std::collections::HashMap<String, String>, String) {
+    let mut headers = std::collections::HashMap::new();
+    let mut body = String::new();
+    let mut in_body = false;
+    let mut current_header: Option<(String, String)> = None;
+
+    for line in raw.lines() {
+        if in_body {
+            if !body.is_empty() {
+                body.push('\n');
+            }
+            body.push_str(line);
+            continue;
+        }
+
+        if line.is_empty() {
+            // End of headers
+            if let Some((k, v)) = current_header.take() {
+                headers.insert(k.to_lowercase(), v);
+            }
+            in_body = true;
+            continue;
+        }
+
+        // Check for header continuation (starts with whitespace)
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some((_, ref mut v)) = current_header {
+                v.push(' ');
+                v.push_str(line.trim());
+            }
+            continue;
+        }
+
+        // New header
+        if let Some((k, v)) = current_header.take() {
+            headers.insert(k.to_lowercase(), v);
+        }
+
+        if let Some(colon_pos) = line.find(':') {
+            let key = line[..colon_pos].trim().to_string();
+            let value = line[colon_pos + 1..].trim().to_string();
+            current_header = Some((key, value));
+        }
+    }
+
+    // Handle final header
+    if let Some((k, v)) = current_header {
+        headers.insert(k.to_lowercase(), v);
+    }
+
+    (headers, body)
+}
+
+/// Extract email addresses from a header value like "Name <email>, Name2 <email2>"
+fn parse_email_addresses(header_value: &str) -> Vec<String> {
+    use regex::Regex;
+    let email_pattern = Regex::new(r"<([^>]+)>|([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})").unwrap();
+
+    email_pattern.captures_iter(header_value)
+        .filter_map(|cap| {
+            cap.get(1).or(cap.get(2)).map(|m| m.as_str().to_string())
+        })
+        .collect()
+}
+
 /// Tool execution handler
 pub struct ToolHandler {
     db: Arc<Database>,
@@ -478,6 +918,12 @@ impl ToolHandler {
             "send_email" => self.send_email(arguments).await,
             "list_folders" => self.list_folders(arguments).await,
             "get_attachment" => self.get_attachment(arguments).await,
+            "create_draft" => self.create_draft(arguments).await,
+            "list_drafts" => self.list_drafts(arguments).await,
+            "get_draft" => self.get_draft(arguments).await,
+            "update_draft" => self.update_draft(arguments).await,
+            "send_draft" => self.send_draft(arguments).await,
+            "delete_draft" => self.delete_draft(arguments).await,
             "search_calendar" => self.search_calendar(arguments).await,
             "get_event" => self.get_event(arguments).await,
             "list_calendars" => self.list_calendars(arguments).await,
@@ -1191,8 +1637,10 @@ Content-Type: text/html; charset=utf-8
 
     /// Send an email via Gmail API (with optional preview mode)
     async fn send_email(&self, args: &Value) -> Result<Value> {
-        // Check if this is a confirmed send or just a preview
+        // Check flags
         let confirm = args["confirm"].as_bool().unwrap_or(false);
+        let save_as_draft = args["save_as_draft"].as_bool().unwrap_or(false);
+        let force_html = args["html"].as_bool().unwrap_or(false);
 
         // Get account
         let from_account = args["from_account"]
@@ -1201,6 +1649,11 @@ Content-Type: text/html; charset=utf-8
 
         let from_email = self.config.resolve_account(from_account)
             .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", from_account)))?;
+
+        // Get account display name from database
+        let account = self.db.get_account(&from_email).await?
+            .ok_or_else(|| Error::InvalidRequest(format!("Account not found in database: {}", from_email)))?;
+        let display_name = &account.display_name;
 
         let to: Vec<String> = args["to"]
             .as_array()
@@ -1247,18 +1700,22 @@ Content-Type: text/html; charset=utf-8
             }
         }
 
-        // If not confirmed, return preview for user approval
-        if !confirm {
+        // Detect if HTML formatting is needed
+        let is_html = force_html || detect_html_content(body);
+
+        // If not confirmed and not saving as draft, return preview for user approval
+        if !confirm && !save_as_draft {
             return Ok(serde_json::json!({
                 "status": "preview",
-                "message": "Please review this email. Call send_email again with confirm=true to send.",
+                "message": "Please review this email. Call send_email again with confirm=true to send, or save_as_draft=true to save as draft.",
                 "email": {
-                    "from": from_email,
+                    "from": format!("{} <{}>", display_name, from_email),
                     "to": to,
                     "cc": cc,
                     "bcc": bcc,
                     "subject": final_subject,
                     "body": body,
+                    "is_html": is_html,
                     "in_reply_to": in_reply_to,
                     "references": references,
                 }
@@ -1266,38 +1723,18 @@ Content-Type: text/html; charset=utf-8
         }
 
         // Build RFC 2822 message
-        let mut message = format!(
-            "From: {}\r\n\
-             To: {}\r\n",
-            from_email,
-            to.join(", ")
+        let message = build_email_message(
+            display_name,
+            &from_email,
+            &to,
+            &cc,
+            &bcc,
+            &final_subject,
+            body,
+            is_html,
+            in_reply_to.as_deref(),
+            references.as_deref(),
         );
-
-        if !cc.is_empty() {
-            message.push_str(&format!("Cc: {}\r\n", cc.join(", ")));
-        }
-        if !bcc.is_empty() {
-            message.push_str(&format!("Bcc: {}\r\n", bcc.join(", ")));
-        }
-
-        let mut headers = String::new();
-        if let Some(ref msg_id) = in_reply_to {
-            headers.push_str(&format!("In-Reply-To: {}\r\n", msg_id));
-        }
-        if let Some(ref refs) = references {
-            headers.push_str(&format!("References: {}\r\n", refs));
-        }
-
-        message.push_str(&format!(
-            "Subject: {}\r\n\
-             MIME-Version: 1.0\r\n\
-             Content-Type: text/plain; charset=utf-8\r\n\
-             {}\r\n\
-             {}",
-            final_subject,
-            headers,
-            body
-        ));
 
         // Base64url encode the message
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -1305,9 +1742,42 @@ Content-Type: text/html; charset=utf-8
 
         // Get access token
         let access_token = self.oauth.get_valid_token(&from_email).await?;
+        let client = reqwest::Client::new();
+
+        // If saving as draft instead of sending
+        if save_as_draft {
+            let response = client
+                .post("https://gmail.googleapis.com/gmail/v1/users/me/drafts")
+                .bearer_auth(&access_token)
+                .json(&serde_json::json!({
+                    "message": { "raw": encoded }
+                }))
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_body = response.text().await.unwrap_or_default();
+                return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            }
+
+            let result: serde_json::Value = response.json().await?;
+            let draft_id = result["id"].as_str().unwrap_or("unknown");
+            let message_id = result["message"]["id"].as_str().unwrap_or("unknown");
+
+            info!("Draft created successfully: {}", draft_id);
+
+            return Ok(serde_json::json!({
+                "status": "draft_created",
+                "draft_id": draft_id,
+                "message_id": message_id,
+                "from": format!("{} <{}>", display_name, from_email),
+                "to": to,
+                "subject": final_subject,
+            }));
+        }
 
         // Send via Gmail API
-        let client = reqwest::Client::new();
         let response = client
             .post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send")
             .bearer_auth(&access_token)
@@ -1331,7 +1801,7 @@ Content-Type: text/html; charset=utf-8
         Ok(serde_json::json!({
             "status": "sent",
             "message_id": message_id,
-            "from": from_email,
+            "from": format!("{} <{}>", display_name, from_email),
             "to": to,
             "subject": final_subject,
         }))
@@ -1496,6 +1966,627 @@ Content-Type: text/html; charset=utf-8
                 "hint": "Use Read tool on local_path to view this file"
             }))
         }
+    }
+
+    // ========================================================================
+    // Draft Operations
+    // ========================================================================
+
+    /// Create a new draft directly (no preview/confirm flow)
+    async fn create_draft(&self, args: &Value) -> Result<Value> {
+        let force_html = args["html"].as_bool().unwrap_or(false);
+
+        // Get account
+        let from_account = args["from_account"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing from_account".to_string()))?;
+
+        let from_email = self.config.resolve_account(from_account)
+            .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", from_account)))?;
+
+        // Get account display name from database
+        let account = self.db.get_account(&from_email).await?
+            .ok_or_else(|| Error::InvalidRequest(format!("Account not found in database: {}", from_email)))?;
+        let display_name = &account.display_name;
+
+        let to: Vec<String> = args["to"]
+            .as_array()
+            .ok_or_else(|| Error::InvalidRequest("Missing 'to' recipients".to_string()))?
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+
+        if to.is_empty() {
+            return Err(Error::InvalidRequest("At least one recipient required".to_string()));
+        }
+
+        let subject = args["subject"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing subject".to_string()))?;
+
+        let body = args["body"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing body".to_string()))?;
+
+        let cc: Vec<String> = args["cc"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        let bcc: Vec<String> = args["bcc"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        // Build reply headers if replying
+        let reply_to_id = args["reply_to_id"].as_str();
+        let mut in_reply_to = None;
+        let mut references = None;
+        let mut final_subject = subject.to_string();
+
+        if let Some(reply_id) = reply_to_id {
+            if let Ok(Some(original)) = self.db.get_email(reply_id).await {
+                in_reply_to = Some(original.message_id.clone());
+                references = Some(original.message_id.clone());
+                if !final_subject.starts_with("Re:") && !final_subject.starts_with("RE:") {
+                    final_subject = format!("Re: {}", original.subject);
+                }
+            }
+        }
+
+        // Detect if HTML formatting is needed
+        let is_html = force_html || detect_html_content(body);
+
+        // Build RFC 2822 message
+        let message = build_email_message(
+            display_name,
+            &from_email,
+            &to,
+            &cc,
+            &bcc,
+            &final_subject,
+            body,
+            is_html,
+            in_reply_to.as_deref(),
+            references.as_deref(),
+        );
+
+        // Base64url encode the message
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let encoded = URL_SAFE_NO_PAD.encode(message.as_bytes());
+
+        // Get access token and create draft
+        let access_token = self.oauth.get_valid_token(&from_email).await?;
+        let client = reqwest::Client::new();
+
+        let response = client
+            .post("https://gmail.googleapis.com/gmail/v1/users/me/drafts")
+            .bearer_auth(&access_token)
+            .json(&serde_json::json!({
+                "message": { "raw": encoded }
+            }))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+        }
+
+        let result: serde_json::Value = response.json().await?;
+        let draft_id = result["id"].as_str().unwrap_or("unknown");
+        let message_id = result["message"]["id"].as_str().unwrap_or("unknown");
+
+        info!("Draft created successfully: {}", draft_id);
+
+        Ok(serde_json::json!({
+            "status": "draft_created",
+            "draft_id": draft_id,
+            "message_id": message_id,
+            "from": format!("{} <{}>", display_name, from_email),
+            "to": to,
+            "subject": final_subject,
+        }))
+    }
+
+    /// List all drafts for an account
+    async fn list_drafts(&self, args: &Value) -> Result<Value> {
+        let account = args["account"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
+
+        let from_email = self.config.resolve_account(account)
+            .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
+
+        let limit = args["limit"].as_u64().unwrap_or(20) as usize;
+
+        let access_token = self.oauth.get_valid_token(&from_email).await?;
+        let client = reqwest::Client::new();
+
+        let response = client
+            .get(format!(
+                "https://gmail.googleapis.com/gmail/v1/users/me/drafts?maxResults={}",
+                limit
+            ))
+            .bearer_auth(&access_token)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+        }
+
+        let result: serde_json::Value = response.json().await?;
+        let drafts_array = result["drafts"].as_array();
+
+        let mut drafts = Vec::new();
+
+        if let Some(draft_list) = drafts_array {
+            for draft in draft_list {
+                let draft_id = draft["id"].as_str().unwrap_or("unknown");
+                let message_id = draft["message"]["id"].as_str().unwrap_or("unknown");
+
+                // Get full draft content to extract subject and recipients
+                let draft_response = client
+                    .get(format!(
+                        "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}?format=metadata&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Date",
+                        draft_id
+                    ))
+                    .bearer_auth(&access_token)
+                    .send()
+                    .await?;
+
+                if draft_response.status().is_success() {
+                    let draft_data: serde_json::Value = draft_response.json().await?;
+                    let headers = draft_data["message"]["payload"]["headers"].as_array();
+
+                    let mut subject = String::new();
+                    let mut to = Vec::new();
+                    let mut date = String::new();
+
+                    if let Some(hdrs) = headers {
+                        for h in hdrs {
+                            let name = h["name"].as_str().unwrap_or("");
+                            let value = h["value"].as_str().unwrap_or("");
+                            match name {
+                                "Subject" => subject = value.to_string(),
+                                "To" => to = parse_email_addresses(value),
+                                "Date" => date = value.to_string(),
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    let snippet = draft_data["message"]["snippet"].as_str().unwrap_or("");
+
+                    drafts.push(serde_json::json!({
+                        "draft_id": draft_id,
+                        "message_id": message_id,
+                        "subject": subject,
+                        "to": to,
+                        "snippet": snippet,
+                        "date": date,
+                    }));
+                }
+            }
+        }
+
+        let total = result["resultSizeEstimate"].as_u64().unwrap_or(drafts.len() as u64);
+
+        Ok(serde_json::json!({
+            "drafts": drafts,
+            "total": total,
+        }))
+    }
+
+    /// Get full content of a specific draft
+    async fn get_draft(&self, args: &Value) -> Result<Value> {
+        let account = args["account"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
+
+        let draft_id = args["draft_id"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing draft_id".to_string()))?;
+
+        let from_email = self.config.resolve_account(account)
+            .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
+
+        let access_token = self.oauth.get_valid_token(&from_email).await?;
+        let client = reqwest::Client::new();
+
+        let response = client
+            .get(format!(
+                "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}?format=full",
+                draft_id
+            ))
+            .bearer_auth(&access_token)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+        }
+
+        let draft_data: serde_json::Value = response.json().await?;
+        let message_id = draft_data["message"]["id"].as_str().unwrap_or("unknown");
+
+        // Extract headers
+        let headers = draft_data["message"]["payload"]["headers"].as_array();
+        let mut subject = String::new();
+        let mut to = Vec::new();
+        let mut cc = Vec::new();
+        let mut from = String::new();
+        let mut date = String::new();
+
+        if let Some(hdrs) = headers {
+            for h in hdrs {
+                let name = h["name"].as_str().unwrap_or("");
+                let value = h["value"].as_str().unwrap_or("");
+                match name {
+                    "Subject" => subject = value.to_string(),
+                    "To" => to = parse_email_addresses(value),
+                    "Cc" => cc = parse_email_addresses(value),
+                    "From" => from = value.to_string(),
+                    "Date" => date = value.to_string(),
+                    _ => {}
+                }
+            }
+        }
+
+        // Extract body - handle both plain text and multipart
+        let mut body = String::new();
+        let mut body_html = String::new();
+
+        let payload = &draft_data["message"]["payload"];
+        let mime_type = payload["mimeType"].as_str().unwrap_or("");
+
+        if mime_type.starts_with("multipart/") {
+            // Handle multipart message
+            if let Some(parts) = payload["parts"].as_array() {
+                for part in parts {
+                    let part_mime = part["mimeType"].as_str().unwrap_or("");
+                    if let Some(body_data) = part["body"]["data"].as_str() {
+                        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+                        if let Ok(decoded) = URL_SAFE_NO_PAD.decode(body_data) {
+                            if let Ok(text) = String::from_utf8(decoded) {
+                                if part_mime == "text/plain" && body.is_empty() {
+                                    body = text;
+                                } else if part_mime == "text/html" && body_html.is_empty() {
+                                    body_html = text;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let Some(body_data) = payload["body"]["data"].as_str() {
+            // Single part message
+            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+            if let Ok(decoded) = URL_SAFE_NO_PAD.decode(body_data) {
+                if let Ok(text) = String::from_utf8(decoded) {
+                    if mime_type == "text/html" {
+                        body_html = text;
+                    } else {
+                        body = text;
+                    }
+                }
+            }
+        }
+
+        // If we only have HTML, generate plain text version
+        if body.is_empty() && !body_html.is_empty() {
+            body = strip_html_tags(&body_html);
+        }
+
+        Ok(serde_json::json!({
+            "draft_id": draft_id,
+            "message_id": message_id,
+            "from": from,
+            "to": to,
+            "cc": cc,
+            "subject": subject,
+            "body": body,
+            "body_html": body_html,
+            "date": date,
+        }))
+    }
+
+    /// Update an existing draft
+    async fn update_draft(&self, args: &Value) -> Result<Value> {
+        let account = args["account"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
+
+        let draft_id = args["draft_id"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing draft_id".to_string()))?;
+
+        let from_email = self.config.resolve_account(account)
+            .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
+
+        // Get account display name from database
+        let db_account = self.db.get_account(&from_email).await?
+            .ok_or_else(|| Error::InvalidRequest(format!("Account not found in database: {}", from_email)))?;
+        let display_name = &db_account.display_name;
+
+        let access_token = self.oauth.get_valid_token(&from_email).await?;
+        let client = reqwest::Client::new();
+
+        // First, get the existing draft to preserve fields not being updated
+        let existing_response = client
+            .get(format!(
+                "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}?format=full",
+                draft_id
+            ))
+            .bearer_auth(&access_token)
+            .send()
+            .await?;
+
+        if !existing_response.status().is_success() {
+            let status = existing_response.status();
+            let error_body = existing_response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+        }
+
+        let existing: serde_json::Value = existing_response.json().await?;
+
+        // Extract existing values
+        let headers = existing["message"]["payload"]["headers"].as_array();
+        let mut existing_subject = String::new();
+        let mut existing_to = Vec::new();
+        let mut existing_cc = Vec::new();
+        let mut existing_body = String::new();
+
+        if let Some(hdrs) = headers {
+            for h in hdrs {
+                let name = h["name"].as_str().unwrap_or("");
+                let value = h["value"].as_str().unwrap_or("");
+                match name {
+                    "Subject" => existing_subject = value.to_string(),
+                    "To" => existing_to = parse_email_addresses(value),
+                    "Cc" => existing_cc = parse_email_addresses(value),
+                    _ => {}
+                }
+            }
+        }
+
+        // Extract existing body
+        let payload = &existing["message"]["payload"];
+        let mime_type = payload["mimeType"].as_str().unwrap_or("");
+
+        if mime_type.starts_with("multipart/") {
+            if let Some(parts) = payload["parts"].as_array() {
+                for part in parts {
+                    let part_mime = part["mimeType"].as_str().unwrap_or("");
+                    if part_mime == "text/plain" {
+                        if let Some(body_data) = part["body"]["data"].as_str() {
+                            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+                            if let Ok(decoded) = URL_SAFE_NO_PAD.decode(body_data) {
+                                if let Ok(text) = String::from_utf8(decoded) {
+                                    existing_body = text;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let Some(body_data) = payload["body"]["data"].as_str() {
+            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+            if let Ok(decoded) = URL_SAFE_NO_PAD.decode(body_data) {
+                if let Ok(text) = String::from_utf8(decoded) {
+                    existing_body = text;
+                }
+            }
+        }
+
+        // Use provided values or fall back to existing
+        let to: Vec<String> = args["to"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or(existing_to);
+
+        let subject = args["subject"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or(existing_subject);
+
+        let body = args["body"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or(existing_body);
+
+        let cc: Vec<String> = args["cc"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or(existing_cc);
+
+        let bcc: Vec<String> = args["bcc"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        // Detect if HTML formatting is needed
+        let force_html = args["html"].as_bool().unwrap_or(false);
+        let is_html = force_html || detect_html_content(&body);
+
+        // Build RFC 2822 message
+        let message = build_email_message(
+            display_name,
+            &from_email,
+            &to,
+            &cc,
+            &bcc,
+            &subject,
+            &body,
+            is_html,
+            None,
+            None,
+        );
+
+        // Base64url encode the message
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let encoded = URL_SAFE_NO_PAD.encode(message.as_bytes());
+
+        // Update draft
+        let response = client
+            .put(format!(
+                "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}",
+                draft_id
+            ))
+            .bearer_auth(&access_token)
+            .json(&serde_json::json!({
+                "message": { "raw": encoded }
+            }))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+        }
+
+        let result: serde_json::Value = response.json().await?;
+        let new_draft_id = result["id"].as_str().unwrap_or(draft_id);
+
+        info!("Draft updated successfully: {}", new_draft_id);
+
+        Ok(serde_json::json!({
+            "status": "updated",
+            "draft_id": new_draft_id,
+            "from": format!("{} <{}>", display_name, from_email),
+            "to": to,
+            "subject": subject,
+        }))
+    }
+
+    /// Send an existing draft by ID
+    async fn send_draft(&self, args: &Value) -> Result<Value> {
+        let account = args["account"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
+
+        let draft_id = args["draft_id"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing draft_id".to_string()))?;
+
+        let from_email = self.config.resolve_account(account)
+            .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
+
+        let access_token = self.oauth.get_valid_token(&from_email).await?;
+        let client = reqwest::Client::new();
+
+        // First get draft info to return details
+        let draft_response = client
+            .get(format!(
+                "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}?format=metadata&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=From",
+                draft_id
+            ))
+            .bearer_auth(&access_token)
+            .send()
+            .await?;
+
+        if !draft_response.status().is_success() {
+            let status = draft_response.status();
+            let error_body = draft_response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+        }
+
+        let draft_data: serde_json::Value = draft_response.json().await?;
+        let headers = draft_data["message"]["payload"]["headers"].as_array();
+
+        let mut subject = String::new();
+        let mut to = Vec::new();
+        let mut from = String::new();
+
+        if let Some(hdrs) = headers {
+            for h in hdrs {
+                let name = h["name"].as_str().unwrap_or("");
+                let value = h["value"].as_str().unwrap_or("");
+                match name {
+                    "Subject" => subject = value.to_string(),
+                    "To" => to = parse_email_addresses(value),
+                    "From" => from = value.to_string(),
+                    _ => {}
+                }
+            }
+        }
+
+        // Send the draft
+        let response = client
+            .post("https://gmail.googleapis.com/gmail/v1/users/me/drafts/send")
+            .bearer_auth(&access_token)
+            .json(&serde_json::json!({
+                "id": draft_id
+            }))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+        }
+
+        let result: serde_json::Value = response.json().await?;
+        let message_id = result["id"].as_str().unwrap_or("unknown");
+
+        info!("Draft sent successfully: {} -> {}", draft_id, message_id);
+
+        Ok(serde_json::json!({
+            "status": "sent",
+            "message_id": message_id,
+            "draft_id": draft_id,
+            "from": from,
+            "to": to,
+            "subject": subject,
+        }))
+    }
+
+    /// Delete an existing draft by ID
+    async fn delete_draft(&self, args: &Value) -> Result<Value> {
+        let account = args["account"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
+
+        let draft_id = args["draft_id"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidRequest("Missing draft_id".to_string()))?;
+
+        let from_email = self.config.resolve_account(account)
+            .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
+
+        let access_token = self.oauth.get_valid_token(&from_email).await?;
+        let client = reqwest::Client::new();
+
+        let response = client
+            .delete(format!(
+                "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}",
+                draft_id
+            ))
+            .bearer_auth(&access_token)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+        }
+
+        info!("Draft deleted successfully: {}", draft_id);
+
+        Ok(serde_json::json!({
+            "status": "deleted",
+            "draft_id": draft_id,
+        }))
     }
 
     /// Search calendar events

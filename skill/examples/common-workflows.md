@@ -107,6 +107,67 @@ groundeffect email send \
   --confirm
 ```
 
+### Sending HTML Emails
+
+```bash
+# HTML is auto-detected from markdown links, URLs, or formatting
+groundeffect email send \
+  --to "recipient@example.com" \
+  --subject "Check this out" \
+  --body "See [this link](https://example.com) for details. **Important**: Review by EOD." \
+  --confirm
+
+# Force HTML mode explicitly
+groundeffect email send \
+  --to "recipient@example.com" \
+  --subject "HTML Email" \
+  --body "<h1>Welcome</h1><p>This is an HTML email.</p>" \
+  --html \
+  --confirm
+```
+
+### Working with Drafts
+
+```bash
+# Create a draft to work on later
+groundeffect email draft create \
+  --from work \
+  --to "recipient@example.com" \
+  --subject "Draft Report" \
+  --body "Initial draft content..."
+
+# List all drafts
+groundeffect email draft list --from work --human
+
+# View a specific draft
+groundeffect email draft show --from work --draft-id r1234567890
+
+# Update the draft with new content
+groundeffect email draft update \
+  --from work \
+  --draft-id r1234567890 \
+  --body "Updated draft with more details..."
+
+# Send the draft when ready
+groundeffect email draft send --from work --draft-id r1234567890
+
+# Or delete if no longer needed
+groundeffect email draft delete --from work --draft-id r1234567890
+```
+
+### Saving Emails as Drafts
+
+```bash
+# Use --save-as-draft to save instead of sending
+groundeffect email send \
+  --to "recipient@example.com" \
+  --subject "Work in Progress" \
+  --body "Still drafting this..." \
+  --save-as-draft
+
+# Returns draft_id that can be used with draft commands
+```
+
 ---
 
 ## Calendar Workflows

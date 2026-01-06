@@ -31,11 +31,16 @@ cp target/release/groundeffect "$DIST_DIR/"
 cp target/release/groundeffect-daemon "$DIST_DIR/"
 cp target/release/groundeffect-mcp "$DIST_DIR/"
 
+# Copy skill files
+echo "Copying skill files..."
+mkdir -p "$DIST_DIR/skill"
+cp -r skill/* "$DIST_DIR/skill/"
+
 # Create tarball
 TARBALL="groundeffect-$VERSION-$TARGET_ARCH.tar.gz"
 echo "Creating $TARBALL..."
 cd "$DIST_DIR"
-tar -czvf "../$TARBALL" groundeffect groundeffect-daemon groundeffect-mcp
+tar -czvf "../$TARBALL" groundeffect groundeffect-daemon groundeffect-mcp skill/
 cd ..
 
 # Calculate SHA256
