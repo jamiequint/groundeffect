@@ -529,12 +529,14 @@ impl CalendarSearchOptions {
             conditions.push(format!("calendar_id = '{}'", calendar_id));
         }
 
-        // Date filters use start_timestamp column
+        // Date filters compare ISO 8601 strings (which sort correctly)
         if let Some(date_from) = &self.date_from {
-            conditions.push(format!("start_timestamp >= {}", date_from.timestamp()));
+            conditions.push(format!("start >= '{}'", date_from.format("%Y-%m-%d")));
         }
         if let Some(date_to) = &self.date_to {
-            conditions.push(format!("start_timestamp <= {}", date_to.timestamp()));
+            // Use next day to include all events on date_to
+            let next_day = *date_to + chrono::Duration::days(1);
+            conditions.push(format!("start < '{}'", next_day.format("%Y-%m-%d")));
         }
 
         if conditions.is_empty() {
