@@ -90,12 +90,28 @@ impl SearchOptions {
             ));
         }
 
+        // To filter (contains match in JSON array)
+        if let Some(to) = &self.to {
+            conditions.push(format!("to LIKE '%{}%'", to));
+        }
+
         // Date filters
         if let Some(date_from) = &self.date_from {
             conditions.push(format!("date >= {}", date_from.timestamp()));
         }
         if let Some(date_to) = &self.date_to {
             conditions.push(format!("date <= {}", date_to.timestamp()));
+        }
+
+        // Attachment filter
+        if let Some(has_attachment) = &self.has_attachment {
+            if *has_attachment {
+                // Has attachments: non-empty JSON array (not null and not "[]")
+                conditions.push("attachments IS NOT NULL AND attachments != '[]'".to_string());
+            } else {
+                // No attachments: null or empty JSON array
+                conditions.push("(attachments IS NULL OR attachments = '[]')".to_string());
+            }
         }
 
         if conditions.is_empty() {
@@ -131,6 +147,8 @@ impl SearchEngine {
 
         let table = self.db.emails_table()?;
         let filter = options.build_filter();
+
+        debug!("Search filter: {:?}", filter);
 
         // Run BM25 and vector search in parallel
         let search_start = std::time::Instant::now();

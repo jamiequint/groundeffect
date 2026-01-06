@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::process::Command;
 
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, Utc};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -948,11 +948,27 @@ Content-Type: text/html; charset=utf-8
                     .collect::<Vec<_>>()
             });
 
+        // Parse date filters (format: YYYY-MM-DD)
+        let date_from = args["date_from"].as_str().and_then(|s| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .map(|d| d.and_time(NaiveTime::MIN).and_utc())
+        });
+        let date_to = args["date_to"].as_str().and_then(|s| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .map(|d| d.and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap()).and_utc())
+        });
+
         let options = SearchOptions {
             accounts,
             limit,
             folder: args["folder"].as_str().map(|s| s.to_string()),
             from: args["from"].as_str().map(|s| s.to_string()),
+            to: args["to"].as_str().map(|s| s.to_string()),
+            date_from,
+            date_to,
+            has_attachment: args["has_attachment"].as_bool(),
             ..Default::default()
         };
 
