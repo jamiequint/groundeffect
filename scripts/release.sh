@@ -1,0 +1,54 @@
+#!/bin/bash
+set -euo pipefail
+
+# Get version from Cargo.toml
+VERSION=$(grep -m1 'version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+echo "Building release v$VERSION"
+
+# Detect architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "arm64" ]; then
+    TARGET_ARCH="darwin-arm64"
+elif [ "$ARCH" = "x86_64" ]; then
+    TARGET_ARCH="darwin-x86_64"
+else
+    echo "Unsupported architecture: $ARCH"
+    exit 1
+fi
+
+# Build release binaries
+echo "Building release binaries..."
+cargo build --release
+
+# Create dist directory
+DIST_DIR="dist"
+rm -rf "$DIST_DIR"
+mkdir -p "$DIST_DIR"
+
+# Copy binaries
+echo "Copying binaries..."
+cp target/release/groundeffect "$DIST_DIR/"
+cp target/release/groundeffect-daemon "$DIST_DIR/"
+cp target/release/groundeffect-mcp "$DIST_DIR/"
+
+# Create tarball
+TARBALL="groundeffect-$VERSION-$TARGET_ARCH.tar.gz"
+echo "Creating $TARBALL..."
+cd "$DIST_DIR"
+tar -czvf "../$TARBALL" groundeffect groundeffect-daemon groundeffect-mcp
+cd ..
+
+# Calculate SHA256
+SHA256=$(shasum -a 256 "$TARBALL" | cut -d' ' -f1)
+
+echo ""
+echo "=== Release v$VERSION ==="
+echo "Tarball: $TARBALL"
+echo "SHA256: $SHA256"
+echo ""
+echo "To create the release:"
+echo "  1. git tag v$VERSION && git push origin v$VERSION"
+echo "  2. gh release create v$VERSION $TARBALL --title \"v$VERSION\" --notes \"Release v$VERSION\""
+echo "  3. Update homebrew-groundeffect/Formula/groundeffect.rb with:"
+echo "     - version \"$VERSION\""
+echo "     - sha256 \"$SHA256\""

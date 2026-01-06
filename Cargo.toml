@@ -4,10 +4,11 @@ members = [
     "crates/groundeffect-core",
     "crates/groundeffect-daemon",
     "crates/groundeffect-mcp",
+    "crates/groundeffect-cli",
 ]
 
 [workspace.package]
-version = "0.1.10"
+version = "0.2.0"
 edition = "2021"
 authors = ["Jamie Quint"]
 license = "MIT"

@@ -47,6 +47,7 @@ cargo build --release
 ```
 
 Binaries will be at:
+- `target/release/groundeffect` - CLI for status and management
 - `target/release/groundeffect-daemon` - Background sync daemon
 - `target/release/groundeffect-mcp` - MCP server for Claude Code
 
@@ -62,11 +63,55 @@ Each user needs their own Google Cloud OAuth credentials:
 6. Select **Desktop app** as application type
 7. Download the JSON credentials file
 
-### 3. Set up MCP for Claude Code
+### 3. Set up Claude Code Integration
+
+You can use GroundEffect with Claude Code via either a **Skill** (recommended) or **MCP Server**:
+
+| Method | Startup | Per-Request Overhead | Best For |
+|--------|---------|---------------------|----------|
+| **Skill** | Instant | ~10-30ms | Claude Code users (recommended) |
+| **MCP** | ~2-3s | ~100-300ms | Other MCP clients, or if you prefer MCP |
+
+The skill is faster because it invokes the `groundeffect` CLI directly via Bash, avoiding MCP's JSON-RPC protocol overhead (serialization, stdio buffering, message framing). Each MCP tool call requires multiple round-trips through the protocol layer, while the skill makes a single CLI invocation with JSON output.
+
+Use MCP if you want to use GroundEffect with other MCP-compatible clients (Cursor, Zed, custom integrations), or if you already have an MCP-based workflow you prefer.
+
+#### Option A: Install Skill (Recommended)
+
+The skill teaches Claude Code how to use the `groundeffect` CLI directly.
+
+**Global installation** (available in all projects):
+```bash
+# Create global skills directory
+mkdir -p ~/.claude/skills
+
+# Clone and copy the skill
+git clone https://github.com/jamiequint/groundeffect.git /tmp/groundeffect
+cp -r /tmp/groundeffect/skill ~/.claude/skills/groundeffect
+
+# Or if you have groundeffect cloned locally:
+cp -r /path/to/groundeffect/skill ~/.claude/skills/groundeffect
+```
+
+**Project-level installation** (available only in specific project):
+```bash
+# From your project root
+mkdir -p .claude/skills
+
+# Copy skill into project
+cp -r /path/to/groundeffect/skill .claude/skills/groundeffect
+
+# Optionally add to .gitignore if you don't want to commit it
+echo ".claude/skills/" >> .gitignore
+```
+
+The skill is now active. Claude Code will automatically use `groundeffect` (or `ge`) CLI commands for email and calendar tasks.
+
+#### Option B: Set up MCP Server
 
 Add to your Claude Code config (`~/.claude.json`):
 
-**Option A: Direct credentials**
+**Direct credentials:**
 ```json
 {
   "mcpServers": {
@@ -82,7 +127,7 @@ Add to your Claude Code config (`~/.claude.json`):
 }
 ```
 
-**Option B: Reference from ~/.secrets (recommended)**
+**Reference from ~/.secrets (recommended for MCP):**
 
 Create `~/.secrets`:
 ```bash
@@ -156,6 +201,14 @@ Interactively change settings. Restarts the daemon if running via launchd.
 | Email poll interval | 300s | How often to check for new emails (IMAP IDLE provides instant notifications regardless) |
 | Calendar poll interval | 300s | How often to sync calendar events |
 | Max concurrent fetches | 10 | Concurrent IMAP connections for parallel downloads (Gmail limit: 15) |
+
+### Check sync status
+
+```bash
+groundeffect sync status
+```
+
+Shows sync status for all accounts including email/event counts, date ranges, and last sync times.
 
 ### Uninstall launchd agent
 
