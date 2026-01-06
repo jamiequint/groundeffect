@@ -891,6 +891,11 @@ fn install_launchd_agent(config: &DaemonConfig) -> Result<()> {
     <string>{stdout}</string>
     <key>StandardErrorPath</key>
     <string>{stderr}</string>
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
     <key>EnvironmentVariables</key>
     <dict>
         <key>GROUNDEFFECT_EMAIL_POLL_INTERVAL</key>
