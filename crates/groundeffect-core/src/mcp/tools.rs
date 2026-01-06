@@ -641,9 +641,8 @@ fn detect_html_content(body: &str) -> bool {
         return true;
     }
 
-    // Check for italic: *text* or _text_ (but not if it looks like **bold**)
-    // We need to be careful not to match the inner * of **
-    let italic = Regex::new(r"(?<!\*)\*[^*\n]+?\*(?!\*)").unwrap();
+    // Check for italic: *text* or _text_ (single asterisks not part of bold)
+    let italic = Regex::new(r"(?:^|[^*])\*[^*\n]+?\*(?:[^*]|$)").unwrap();
     if italic.is_match(body) {
         return true;
     }
@@ -667,10 +666,9 @@ fn convert_to_html(body: &str) -> String {
     let md_link = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
     html = md_link.replace_all(&html, r#"<a href="$2">$1</a>"#).to_string();
 
-    // Convert plain URLs to links (but not if already in an href)
-    // We need to be careful not to double-link URLs that were in markdown links
-    let url_pattern = Regex::new(r#"(?<!")(https?://[^\s<>"]+)"#).unwrap();
-    html = url_pattern.replace_all(&html, r#"<a href="$1">$1</a>"#).to_string();
+    // Convert plain URLs to links (not if preceded by " or > which means already in href)
+    let url_pattern = Regex::new(r#"(^|[^">])(https?://[^\s<>"]+)"#).unwrap();
+    html = url_pattern.replace_all(&html, r#"$1<a href="$2">$2</a>"#).to_string();
 
     // Convert **bold** to <strong>
     let bold = Regex::new(r"\*\*(.+?)\*\*").unwrap();
@@ -680,12 +678,12 @@ fn convert_to_html(body: &str) -> String {
     let bold2 = Regex::new(r"__(.+?)__").unwrap();
     html = bold2.replace_all(&html, r"<strong>$1</strong>").to_string();
 
-    // Convert *italic* to <em> (but not ** which was already handled)
-    let italic = Regex::new(r"(?<!\*)\*([^*\n]+?)\*(?!\*)").unwrap();
+    // Convert *italic* to <em> - safe now since ** is already converted to <strong>
+    let italic = Regex::new(r"\*([^*\n]+?)\*").unwrap();
     html = italic.replace_all(&html, r"<em>$1</em>").to_string();
 
-    // Convert _italic_ to <em> (but not __ which was already handled)
-    let italic2 = Regex::new(r"(?<!_)_([^_\n]+?)_(?!_)").unwrap();
+    // Convert _italic_ to <em> - safe now since __ is already converted to <strong>
+    let italic2 = Regex::new(r"_([^_\n]+?)_").unwrap();
     html = italic2.replace_all(&html, r"<em>$1</em>").to_string();
 
     // Convert newlines to <br>

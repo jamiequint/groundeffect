@@ -4,7 +4,8 @@ description: |
   Use this skill when the user asks about email, calendar, or Gmail/Google Calendar
   management via GroundEffect CLI. Triggers include: "search my email", "list recent emails",
   "check my calendar", "create a calendar event", "manage groundeffect accounts",
-  "sync status", "start the daemon", "groundeffect", "groundeffect command".
+  "sync status", "start the daemon", "groundeffect", "groundeffect command",
+  "draft email", "save draft", "save as draft", "create draft", "send email".
 version: 1.0.0
 ---
 
@@ -77,9 +78,15 @@ groundeffect config add-permissions            # Add Claude Code permissions
 groundeffect config remove-permissions         # Remove Claude Code permissions
 ```
 
+## Important Guidelines
+
+**DRAFTS**: When the user asks to "save as draft", "draft an email", or "save this draft", ALWAYS use the `groundeffect email draft create` command to save it to Gmail drafts. Do NOT save email drafts to markdown files - use Gmail's native draft system so the user can access, edit, and send drafts from any device.
+
+**SENDING**: When composing an email, use `groundeffect email send --save-as-draft` to save to Gmail drafts, or add `--confirm` to send immediately. Without these flags, the command returns a preview.
+
 ## Usage Notes
 
-- **CLI binary**: `groundeffect` 
+- **CLI binary**: `groundeffect`
 - **Output format**: JSON by default, use `--human` for readable output
 - **Date format**: Use YYYY-MM-DD for date parameters
 - **Account references**: Use email address or alias interchangeably

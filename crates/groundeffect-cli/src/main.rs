@@ -4416,7 +4416,8 @@ fn detect_html_content(body: &str) -> bool {
     if url_pattern.is_match(body) { return true; }
     let bold = Regex::new(r"\*\*.+?\*\*|__.+?__").unwrap();
     if bold.is_match(body) { return true; }
-    let italic = Regex::new(r"(?<!\*)\*[^*\n]+?\*(?!\*)").unwrap();
+    // Simple italic detection - single asterisk not part of bold
+    let italic = Regex::new(r"(?:^|[^*])\*[^*\n]+?\*(?:[^*]|$)").unwrap();
     if italic.is_match(body) { return true; }
     let html_tag = Regex::new(r"</?[a-zA-Z][^>]*>").unwrap();
     if html_tag.is_match(body) { return true; }
@@ -4426,17 +4427,21 @@ fn detect_html_content(body: &str) -> bool {
 fn convert_to_html(body: &str) -> String {
     use regex::Regex;
     let mut html = body.to_string();
+    // Convert markdown links first
     let md_link = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
     html = md_link.replace_all(&html, r#"<a href="$2">$1</a>"#).to_string();
-    let url_pattern = Regex::new(r#"(?<!")(https?://[^\s<>"]+)"#).unwrap();
-    html = url_pattern.replace_all(&html, r#"<a href="$1">$1</a>"#).to_string();
+    // Convert plain URLs not already in href (preceded by " or >)
+    let url_pattern = Regex::new(r#"(^|[^">])(https?://[^\s<>"]+)"#).unwrap();
+    html = url_pattern.replace_all(&html, r#"$1<a href="$2">$2</a>"#).to_string();
+    // Convert bold first (** and __)
     let bold = Regex::new(r"\*\*(.+?)\*\*").unwrap();
     html = bold.replace_all(&html, r"<strong>$1</strong>").to_string();
     let bold2 = Regex::new(r"__(.+?)__").unwrap();
     html = bold2.replace_all(&html, r"<strong>$1</strong>").to_string();
-    let italic = Regex::new(r"(?<!\*)\*([^*\n]+?)\*(?!\*)").unwrap();
+    // Convert italic (single * or _) - safe now since ** and __ are converted
+    let italic = Regex::new(r"\*([^*\n]+?)\*").unwrap();
     html = italic.replace_all(&html, r"<em>$1</em>").to_string();
-    let italic2 = Regex::new(r"(?<!_)_([^_\n]+?)_(?!_)").unwrap();
+    let italic2 = Regex::new(r"_([^_\n]+?)_").unwrap();
     html = italic2.replace_all(&html, r"<em>$1</em>").to_string();
     html = html.replace("\n", "<br>\n");
     html
