@@ -3,7 +3,8 @@ name: GroundEffect
 description: |
   Use this skill when the user asks about email, calendar, or Gmail/Google Calendar
   management via GroundEffect CLI. Triggers include: "search my email", "list recent emails",
-  "check my calendar", "create a calendar event", "manage groundeffect accounts",
+  "check my calendar", "what's on my calendar", "show my meetings", "calendar tomorrow",
+  "calendar next week", "create a calendar event", "manage groundeffect accounts",
   "sync status", "start the daemon", "groundeffect", "groundeffect command",
   "draft email", "save draft", "save as draft", "create draft", "send email".
 version: 1.0.0
@@ -40,11 +41,17 @@ groundeffect email draft delete <id> --from-account X    # Delete draft
 
 ### Calendar Commands
 ```bash
-groundeffect calendar search "query"           # Search events
+groundeffect calendar events                   # List events by date range (no query needed)
+groundeffect calendar events --from 2026-01-07 --to 2026-01-08 --human  # Tomorrow's events
+groundeffect calendar search "query"           # Search events with semantic search
 groundeffect calendar list                     # List calendars
 groundeffect calendar show <event_id>          # Show event details
 groundeffect calendar create --summary "X" --start "ISO" --end "ISO"  # Create event
 ```
+
+**Calendar Events vs Calendar Search**:
+- Use `calendar events` when the user asks "what's on my calendar tomorrow/next week" (date-based, no query)
+- Use `calendar search` when the user asks "find meetings about project X" (semantic search)
 
 ### Account Commands
 ```bash

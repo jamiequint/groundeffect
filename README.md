@@ -142,9 +142,22 @@ All commands output JSON by default. Add `--human` for readable output.
 
 | Command | Description |
 |---------|-------------|
+| `calendar events` | List events in a date range (no query required) |
 | `calendar search <query>` | Search events with semantic search |
 | `calendar show <id>` | Show event details |
 | `calendar create` | Create new event |
+
+**Parameters for `events`:**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--from` | Start date (YYYY-MM-DD) | today |
+| `--to` | End date (YYYY-MM-DD) | 7 days from start |
+| `--account` | Filter to specific account(s) | all |
+| `--limit` | Max results (max: 200) | 50 |
+| `--human` | Human-readable output grouped by date | - |
+
+Use `calendar events` to answer questions like "what's on my calendar tomorrow" or "show me my meetings next week" without requiring a search query.
 
 **Parameters for `create`:**
 

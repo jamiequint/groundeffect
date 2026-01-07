@@ -1064,6 +1064,81 @@ impl Database {
         Ok(events)
     }
 
+    /// List calendar events within a date range, sorted by start time (ascending).
+    ///
+    /// This is designed for answering questions like "what's on my calendar tomorrow"
+    /// or "show me my meetings next week" without requiring a semantic search query.
+    ///
+    /// # Arguments
+    /// * `accounts` - Optional list of account IDs to filter by
+    /// * `from` - Start of date range (inclusive), as ISO 8601 date string (YYYY-MM-DD)
+    /// * `to` - End of date range (exclusive), as ISO 8601 date string (YYYY-MM-DD)
+    /// * `limit` - Maximum number of events to return
+    ///
+    /// # Returns
+    /// Events sorted by start time ascending (chronological order)
+    pub async fn list_events_in_range(
+        &self,
+        accounts: Option<&[String]>,
+        from: &str,
+        to: &str,
+        limit: usize,
+    ) -> Result<Vec<CalendarEvent>> {
+        let table = self.events_table()?;
+
+        // Select all columns except the embedding vector for speed
+        let columns = &[
+            "id", "account_id", "calendar_id", "ical_uid", "summary", "description",
+            "location", "start", "end", "timezone", "all_day",
+            "recurrence_rule", "organizer", "attendees", "status",
+            "etag",
+        ];
+
+        // Build filter for date range
+        // start is stored as ISO 8601 string, so string comparison works
+        let mut filters = vec![
+            format!("start >= '{}'", from),
+            format!("start < '{}'", to),
+        ];
+
+        // Add account filter if specified
+        if let Some(accts) = accounts {
+            if !accts.is_empty() {
+                let account_list = accts
+                    .iter()
+                    .map(|a| format!("'{}'", a))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                filters.push(format!("account_id IN ({})", account_list));
+            }
+        }
+
+        let filter = filters.join(" AND ");
+
+        let query = table
+            .query()
+            .select(lancedb::query::Select::columns(columns))
+            .only_if(&filter);
+
+        let results = query.execute().await?;
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut events = Vec::new();
+        for batch in &batches {
+            for i in 0..batch.num_rows() {
+                events.push(batch_to_event(batch, i)?);
+            }
+        }
+
+        // Sort by start time ascending (chronological order)
+        events.sort_by(|a, b| a.start.as_date().cmp(&b.start.as_date()));
+
+        // Return only the requested limit
+        events.truncate(limit);
+
+        Ok(events)
+    }
+
     /// Get a map of google_event_id -> etag for all events in an account
     /// Used to detect which events have changed during incremental sync
     pub async fn get_event_etags(&self, account_id: &str) -> Result<std::collections::HashMap<String, String>> {

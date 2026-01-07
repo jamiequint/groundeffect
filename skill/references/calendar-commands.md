@@ -1,5 +1,67 @@
 # Calendar Commands Reference
 
+## groundeffect calendar events
+
+**List calendar events in a date range WITHOUT requiring a search query.**
+
+Use this command when the user asks "what's on my calendar tomorrow" or "show me my meetings next week" - it simply lists all events chronologically in the specified date range.
+
+```bash
+groundeffect calendar events [options]
+```
+
+### Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--from` | Start date (YYYY-MM-DD) | today |
+| `--to` | End date (YYYY-MM-DD) | 7 days after from |
+| `--account` | Filter to specific account(s) | all accounts |
+| `--limit` | Maximum results (1-200) | 50 |
+| `--human` | Human-readable output grouped by date | JSON output |
+
+### Examples
+```bash
+# Tomorrow's events (human-readable)
+groundeffect calendar events --from 2026-01-07 --to 2026-01-08 --human
+
+# Next 7 days (default range)
+groundeffect calendar events --human
+
+# Next 2 weeks for specific account
+groundeffect calendar events --from 2026-01-06 --to 2026-01-20 --account jamie@example.com
+
+# JSON output for processing
+groundeffect calendar events --from 2026-01-07 --to 2026-01-08
+```
+
+### Output (Human-readable)
+```
+📅 Tuesday, Jan 7, 2026
+
+   9:00 AM  Team Standup (30m)
+            📍 Zoom
+
+  12:00 PM  Lunch with Client (1h)
+            📍 Restaurant Name
+
+📅 Wednesday, Jan 8, 2026
+
+   2:00 PM  Project Review (1h)
+            📍 Conference Room A
+```
+
+### When to Use `calendar events` vs `calendar search`
+
+| User Request | Command to Use |
+|--------------|----------------|
+| "What's on my calendar tomorrow?" | `calendar events --from ... --to ...` |
+| "Show me my meetings next week" | `calendar events --from ... --to ...` |
+| "Do I have anything Friday?" | `calendar events --from ... --to ...` |
+| "Find meetings about the project" | `calendar search "project"` |
+| "When did I last meet with John?" | `calendar search "John"` |
+
+---
+
 ## groundeffect calendar search
 
 Search calendar events using natural language.

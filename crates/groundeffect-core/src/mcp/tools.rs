@@ -127,7 +127,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "list_recent_emails".to_string(),
+            name: "list_emails".to_string(),
             description: "List recent emails sorted by date (newest first). Much faster than search_emails for just getting recent messages.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -435,7 +435,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         },
         // Calendar tools
         ToolDefinition {
-            name: "search_calendar".to_string(),
+            name: "search_events".to_string(),
             description: "Search calendar events across one or more accounts".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -484,6 +484,36 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_events".to_string(),
+            description: "List calendar events in a date range WITHOUT semantic search. Use this to answer questions like 'what's on my calendar tomorrow' or 'show me my meetings next week'. Unlike search_events, this does NOT require a search query - it simply lists all events in the specified date range chronologically.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "from": {
+                        "type": "string",
+                        "format": "date",
+                        "description": "Start date (YYYY-MM-DD). Defaults to today if omitted."
+                    },
+                    "to": {
+                        "type": "string",
+                        "format": "date",
+                        "description": "End date (YYYY-MM-DD). Defaults to 7 days after 'from' if omitted."
+                    },
+                    "accounts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter to specific accounts (email or alias). Omit to list from ALL accounts."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "maximum": 200,
+                        "description": "Maximum number of events to return"
+                    }
+                }
             }),
         },
         ToolDefinition {
@@ -908,26 +938,31 @@ impl ToolHandler {
         debug!("Executing tool: {} with args: {:?}", name, arguments);
 
         let result = match name {
+            // Management tools
             "manage_accounts" => self.manage_accounts(arguments).await,
+            "manage_sync" => self.manage_sync(arguments).await,
+            "manage_daemon" => self.manage_daemon(arguments).await,
+            // Email tools
             "search_emails" => self.search_emails(arguments).await,
-            "list_recent_emails" => self.list_recent_emails(arguments).await,
+            "list_emails" => self.list_recent_emails(arguments).await,
             "get_email" => self.get_email(arguments).await,
             "get_thread" => self.get_thread(arguments).await,
             "send_email" => self.send_email(arguments).await,
             "list_folders" => self.list_folders(arguments).await,
             "get_attachment" => self.get_attachment(arguments).await,
+            // Draft tools
             "create_draft" => self.create_draft(arguments).await,
             "list_drafts" => self.list_drafts(arguments).await,
             "get_draft" => self.get_draft(arguments).await,
             "update_draft" => self.update_draft(arguments).await,
             "send_draft" => self.send_draft(arguments).await,
             "delete_draft" => self.delete_draft(arguments).await,
-            "search_calendar" => self.search_calendar(arguments).await,
+            // Calendar tools
+            "search_events" => self.search_calendar(arguments).await,
             "get_event" => self.get_event(arguments).await,
+            "list_events" => self.list_calendar_events(arguments).await,
             "list_calendars" => self.list_calendars(arguments).await,
             "create_event" => self.create_event(arguments).await,
-            "manage_sync" => self.manage_sync(arguments).await,
-            "manage_daemon" => self.manage_daemon(arguments).await,
             _ => Err(Error::ToolNotFound(name.to_string())),
         }?;
 
@@ -2656,6 +2691,79 @@ Content-Type: text/html; charset=utf-8
             .ok_or_else(|| Error::Other(format!("Event not found: {}", id)))?;
 
         Ok(serde_json::to_value(&event)?)
+    }
+
+    /// List calendar events in a date range (no semantic search required)
+    async fn list_calendar_events(&self, args: &Value) -> Result<Value> {
+        // Get date range
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let from = args["from"].as_str().unwrap_or(&today).to_string();
+
+        let to = match args["to"].as_str() {
+            Some(d) => d.to_string(),
+            None => {
+                let from_date = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
+                    .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+                (from_date + chrono::Duration::days(7)).format("%Y-%m-%d").to_string()
+            }
+        };
+
+        let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+
+        // Resolve account filter if provided
+        let accounts: Option<Vec<String>> = args["accounts"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|id| self.config.resolve_account(id))
+                    .collect()
+            });
+
+        let events = self.db.list_events_in_range(
+            accounts.as_deref(),
+            &from,
+            &to,
+            limit.min(200),
+        ).await?;
+
+        // Convert to JSON-friendly format with full attendee/organizer data
+        let results: Vec<serde_json::Value> = events.iter().map(|e| {
+            serde_json::json!({
+                "id": e.id,
+                "summary": e.summary,
+                "start": match &e.start {
+                    crate::models::EventTime::DateTime(dt) => dt.to_rfc3339(),
+                    crate::models::EventTime::Date(d) => d.to_string(),
+                },
+                "end": match &e.end {
+                    crate::models::EventTime::DateTime(dt) => dt.to_rfc3339(),
+                    crate::models::EventTime::Date(d) => d.to_string(),
+                },
+                "location": e.location,
+                "organizer": e.organizer.as_ref().map(|o| serde_json::json!({
+                    "email": o.email,
+                    "name": o.name,
+                    "response_status": o.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                    "optional": o.optional,
+                })),
+                "attendees": e.attendees.iter().map(|a| serde_json::json!({
+                    "email": a.email,
+                    "name": a.name,
+                    "response_status": a.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                    "optional": a.optional,
+                })).collect::<Vec<_>>(),
+                "account_id": e.account_id,
+                "calendar_id": e.calendar_id,
+            })
+        }).collect();
+
+        Ok(serde_json::json!({
+            "from": from,
+            "to": to,
+            "count": results.len(),
+            "events": results
+        }))
     }
 
     /// List calendars for all accounts (or filtered accounts)

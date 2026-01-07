@@ -19,6 +19,17 @@ use groundeffect_core::search::{CalendarSearchOptions, SearchEngine, SearchOptio
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
+/// Attendee detail for JSON calendar output
+#[derive(Serialize)]
+struct AttendeeDetail {
+    email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_status: Option<String>,
+    optional: bool,
+}
+
 #[derive(Parser)]
 #[command(name = "groundeffect")]
 #[command(about = "GroundEffect - Local email and calendar sync with semantic search")]
@@ -576,6 +587,57 @@ EXAMPLES:
     Show {
         /// Event ID (from search results)
         id: String,
+        /// Human-readable output instead of JSON
+        #[arg(long)]
+        human: bool,
+    },
+    /// List calendar events in a date range (no search query required).
+    /// Returns JSON array with: id, summary, start, end, location, account_id, calendar_id.
+    #[command(long_about = "List calendar events in a date range without semantic search.
+
+Use this command to answer questions like 'what's on my calendar tomorrow' or
+'show me my meetings next week'. Unlike 'calendar search', this command does NOT
+require a search query - it simply lists all events in the specified date range.
+
+RESPONSE FIELDS:
+  id          - Unique event ID (use with 'calendar show' for full details)
+  summary     - Event title
+  start       - Start time (ISO 8601 or YYYY-MM-DD for all-day events)
+  end         - End time (ISO 8601 or YYYY-MM-DD for all-day events)
+  location    - Event location (may be null)
+  account_id  - Which synced account this event belongs to
+  calendar_id - Google Calendar ID
+
+DATE FORMAT:
+  Use YYYY-MM-DD format for --from and --to parameters.
+  If --from is omitted, defaults to today.
+  If --to is omitted, defaults to 7 days after --from.
+
+EXAMPLES:
+  # Tomorrow's events
+  groundeffect calendar events --from 2024-01-07 --to 2024-01-08
+
+  # Next week's events
+  groundeffect calendar events --from 2024-01-06 --to 2024-01-13
+
+  # Events for a specific account
+  groundeffect calendar events --from 2024-01-07 --account work@example.com
+
+  # Today's events (default)
+  groundeffect calendar events")]
+    Events {
+        /// Start date (YYYY-MM-DD). Defaults to today if not specified.
+        #[arg(long)]
+        from: Option<String>,
+        /// End date (YYYY-MM-DD). Defaults to 7 days after --from if not specified.
+        #[arg(long)]
+        to: Option<String>,
+        /// Filter to specific account(s) by email address
+        #[arg(long)]
+        account: Option<Vec<String>>,
+        /// Maximum number of results (default: 50, max: 200)
+        #[arg(long, default_value = "50")]
+        limit: usize,
         /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
@@ -1674,15 +1736,32 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                         if let Some(loc) = &event.location {
                             println!("Where: {}", loc);
                         }
-                        if let Some(desc) = &event.description {
-                            println!("\n{}", desc);
+                        // Show organizer
+                        if let Some(org) = &event.organizer {
+                            let org_name = org.name.as_deref().unwrap_or(&org.email);
+                            println!("\nOrganizer: {} <{}>", org_name, org.email);
                         }
+                        // Show attendees with response status
                         if !event.attendees.is_empty() {
-                            println!("\nAttendees:");
+                            println!("\nAttendees ({}):", event.attendees.len());
                             for attendee in &event.attendees {
                                 let name = attendee.name.as_deref().unwrap_or(&attendee.email);
-                                println!("  - {}", name);
+                                let status_icon = match &attendee.response_status {
+                                    Some(s) => match s {
+                                        groundeffect_core::models::AttendeeStatus::Accepted => "✓",
+                                        groundeffect_core::models::AttendeeStatus::Declined => "✗",
+                                        groundeffect_core::models::AttendeeStatus::Tentative => "?",
+                                        groundeffect_core::models::AttendeeStatus::NeedsAction => "?",
+                                    },
+                                    None => " ",
+                                };
+                                let optional_suffix = if attendee.optional { " (optional)" } else { "" };
+                                println!("  {} {} <{}>{}", status_icon, name, attendee.email, optional_suffix);
                             }
+                        }
+                        // Show description last
+                        if let Some(desc) = &event.description {
+                            println!("\n{}", desc);
                         }
                     } else {
                         #[derive(Serialize)]
@@ -1691,9 +1770,13 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                             summary: String,
                             start: String,
                             end: String,
+                            #[serde(skip_serializing_if = "Option::is_none")]
                             location: Option<String>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
                             description: Option<String>,
-                            attendees: Vec<String>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            organizer: Option<AttendeeDetail>,
+                            attendees: Vec<AttendeeDetail>,
                             account_id: String,
                             calendar_id: String,
                         }
@@ -1704,7 +1787,18 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                             end: format_event_time(&event.end),
                             location: event.location.clone(),
                             description: event.description.clone(),
-                            attendees: event.attendees.iter().map(|a| a.email.clone()).collect(),
+                            organizer: event.organizer.as_ref().map(|o| AttendeeDetail {
+                                email: o.email.clone(),
+                                name: o.name.clone(),
+                                response_status: o.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                                optional: o.optional,
+                            }),
+                            attendees: event.attendees.iter().map(|a| AttendeeDetail {
+                                email: a.email.clone(),
+                                name: a.name.clone(),
+                                response_status: a.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                                optional: a.optional,
+                            }).collect(),
                             account_id: event.account_id.clone(),
                             calendar_id: event.calendar_id.clone(),
                         };
@@ -1718,6 +1812,130 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                         println!("{{\"error\": \"Event not found\"}}");
                     }
                 }
+            }
+        }
+
+        CalendarCommands::Events { from, to, account, limit, human } => {
+            let human = human || global_human;
+            let config = Config::load().unwrap_or_default();
+            let db = Database::open(config.lancedb_dir()).await?;
+
+            // Default to today if --from not specified
+            let from_date = match &from {
+                Some(d) => d.clone(),
+                None => chrono::Utc::now().format("%Y-%m-%d").to_string(),
+            };
+
+            // Default to 7 days after from if --to not specified
+            let to_date = match &to {
+                Some(d) => d.clone(),
+                None => {
+                    let from_parsed = chrono::NaiveDate::parse_from_str(&from_date, "%Y-%m-%d")
+                        .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+                    (from_parsed + chrono::Duration::days(7)).format("%Y-%m-%d").to_string()
+                }
+            };
+
+            let accounts_ref = account.as_ref().map(|v| v.iter().map(|s| s.clone()).collect::<Vec<_>>());
+            let events = db.list_events_in_range(
+                accounts_ref.as_deref(),
+                &from_date,
+                &to_date,
+                limit.min(200),
+            ).await?;
+
+            if human {
+                if events.is_empty() {
+                    println!("No events found from {} to {}.", from_date, to_date);
+                } else {
+                    println!("\n📅 Events from {} to {} ({} events)\n", from_date, to_date, events.len());
+                    let mut current_date = String::new();
+                    for event in &events {
+                        let event_date = match &event.start {
+                            EventTime::DateTime(dt) => dt.format("%Y-%m-%d").to_string(),
+                            EventTime::Date(d) => d.to_string(),
+                        };
+                        if event_date != current_date {
+                            current_date = event_date.clone();
+                            // Parse and format as weekday
+                            if let Ok(d) = chrono::NaiveDate::parse_from_str(&current_date, "%Y-%m-%d") {
+                                println!("━━ {} ━━", d.format("%A, %B %e, %Y"));
+                            } else {
+                                println!("━━ {} ━━", current_date);
+                            }
+                        }
+                        let time_str = match &event.start {
+                            EventTime::DateTime(dt) => dt.format("%l:%M %p").to_string(),
+                            EventTime::Date(_) => "All day".to_string(),
+                        };
+                        let duration = match (&event.start, &event.end) {
+                            (EventTime::DateTime(s), EventTime::DateTime(e)) => {
+                                let mins = (*e - *s).num_minutes();
+                                if mins >= 60 {
+                                    format!(" ({}h{}m)", mins / 60, mins % 60)
+                                } else {
+                                    format!(" ({}m)", mins)
+                                }
+                            }
+                            _ => String::new(),
+                        };
+                        println!("  {} {}{}", time_str.trim(), event.summary, duration);
+                        if let Some(loc) = &event.location {
+                            if !loc.is_empty() {
+                                println!("          📍 {}", loc);
+                            }
+                        }
+                        // Show organizer info if it's someone else's event
+                        if let Some(org) = &event.organizer {
+                            let org_name = org.name.as_deref().unwrap_or(&org.email);
+                            // Check if organizer is different from the account
+                            if org.email != event.account_id {
+                                println!("          👤 Invited by: {}", org_name);
+                            }
+                        }
+                    }
+                    println!();
+                }
+            } else {
+                #[derive(Serialize)]
+                struct EventResult {
+                    id: String,
+                    summary: String,
+                    start: String,
+                    end: String,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    location: Option<String>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    organizer: Option<AttendeeDetail>,
+                    attendees: Vec<AttendeeDetail>,
+                    account_id: String,
+                    calendar_id: String,
+                }
+                let results: Vec<EventResult> = events
+                    .iter()
+                    .map(|e| EventResult {
+                        id: e.id.clone(),
+                        summary: e.summary.clone(),
+                        start: format_event_time(&e.start),
+                        end: format_event_time(&e.end),
+                        location: e.location.clone(),
+                        organizer: e.organizer.as_ref().map(|o| AttendeeDetail {
+                            email: o.email.clone(),
+                            name: o.name.clone(),
+                            response_status: o.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                            optional: o.optional,
+                        }),
+                        attendees: e.attendees.iter().map(|a| AttendeeDetail {
+                            email: a.email.clone(),
+                            name: a.name.clone(),
+                            response_status: a.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                            optional: a.optional,
+                        }).collect(),
+                        account_id: e.account_id.clone(),
+                        calendar_id: e.calendar_id.clone(),
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&results)?);
             }
         }
 
