@@ -1,12 +1,6 @@
 ---
 name: GroundEffect
-description: |
-  Use this skill when the user asks about email, calendar, or Gmail/Google Calendar
-  management via GroundEffect CLI. Triggers include: "search my email", "list recent emails",
-  "check my calendar", "what's on my calendar", "show my meetings", "calendar tomorrow",
-  "calendar next week", "create a calendar event", "manage groundeffect accounts",
-  "sync status", "start the daemon", "groundeffect", "groundeffect command",
-  "draft email", "save draft", "save as draft", "create draft", "send email".
+description: Use this skill when the user asks about email, calendar, or Gmail/Google Calendar management via GroundEffect CLI. Triggers include "search my email", "list recent emails", "check my calendar", "what's on my calendar", "show my meetings", "calendar tomorrow", "calendar next week", "create a calendar event", "manage groundeffect accounts", "sync status", "start the daemon", "groundeffect", "groundeffect command", "draft email", "save draft", "save as draft", "create draft", "send email".
 version: 1.0.0
 ---
 

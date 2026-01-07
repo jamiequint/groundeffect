@@ -2272,45 +2272,49 @@ Content-Type: text/html; charset=utf-8
             }
         }
 
-        // Extract body - handle both plain text and multipart
-        let mut body = String::new();
-        let mut body_html = String::new();
+        // Recursively extract body from potentially nested multipart structures
+        fn extract_body_recursive(
+            part: &serde_json::Value,
+            body: &mut String,
+            body_html: &mut String,
+        ) {
+            use base64::{Engine, engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD}};
+            let mime_type = part["mimeType"].as_str().unwrap_or("");
 
-        let payload = &draft_data["message"]["payload"];
-        let mime_type = payload["mimeType"].as_str().unwrap_or("");
-
-        if mime_type.starts_with("multipart/") {
-            // Handle multipart message
-            if let Some(parts) = payload["parts"].as_array() {
-                for part in parts {
-                    let part_mime = part["mimeType"].as_str().unwrap_or("");
-                    if let Some(body_data) = part["body"]["data"].as_str() {
-                        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-                        if let Ok(decoded) = URL_SAFE_NO_PAD.decode(body_data) {
-                            if let Ok(text) = String::from_utf8(decoded) {
-                                if part_mime == "text/plain" && body.is_empty() {
-                                    body = text;
-                                } else if part_mime == "text/html" && body_html.is_empty() {
-                                    body_html = text;
-                                }
-                            }
+            if mime_type == "text/plain" && body.is_empty() {
+                if let Some(body_data) = part["body"]["data"].as_str() {
+                    // Gmail uses URL-safe base64 - try with padding first, then without
+                    let decoded = URL_SAFE.decode(body_data)
+                        .or_else(|_| URL_SAFE_NO_PAD.decode(body_data));
+                    if let Ok(decoded) = decoded {
+                        if let Ok(text) = String::from_utf8(decoded) {
+                            *body = text;
                         }
                     }
                 }
-            }
-        } else if let Some(body_data) = payload["body"]["data"].as_str() {
-            // Single part message
-            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-            if let Ok(decoded) = URL_SAFE_NO_PAD.decode(body_data) {
-                if let Ok(text) = String::from_utf8(decoded) {
-                    if mime_type == "text/html" {
-                        body_html = text;
-                    } else {
-                        body = text;
+            } else if mime_type == "text/html" && body_html.is_empty() {
+                if let Some(body_data) = part["body"]["data"].as_str() {
+                    let decoded = URL_SAFE.decode(body_data)
+                        .or_else(|_| URL_SAFE_NO_PAD.decode(body_data));
+                    if let Ok(decoded) = decoded {
+                        if let Ok(text) = String::from_utf8(decoded) {
+                            *body_html = text;
+                        }
+                    }
+                }
+            } else if mime_type.starts_with("multipart/") {
+                if let Some(parts) = part["parts"].as_array() {
+                    for nested_part in parts {
+                        extract_body_recursive(nested_part, body, body_html);
                     }
                 }
             }
         }
+
+        let mut body = String::new();
+        let mut body_html = String::new();
+        let payload = &draft_data["message"]["payload"];
+        extract_body_recursive(payload, &mut body, &mut body_html);
 
         // If we only have HTML, generate plain text version
         if body.is_empty() && !body_html.is_empty() {
@@ -2389,34 +2393,38 @@ Content-Type: text/html; charset=utf-8
             }
         }
 
-        // Extract existing body
-        let payload = &existing["message"]["payload"];
-        let mime_type = payload["mimeType"].as_str().unwrap_or("");
+        // Recursively extract text/plain body from potentially nested multipart structures
+        fn extract_text_body_recursive(part: &serde_json::Value) -> Option<String> {
+            use base64::{Engine, engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD}};
+            let mime_type = part["mimeType"].as_str().unwrap_or("");
 
-        if mime_type.starts_with("multipart/") {
-            if let Some(parts) = payload["parts"].as_array() {
-                for part in parts {
-                    let part_mime = part["mimeType"].as_str().unwrap_or("");
-                    if part_mime == "text/plain" {
-                        if let Some(body_data) = part["body"]["data"].as_str() {
-                            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-                            if let Ok(decoded) = URL_SAFE_NO_PAD.decode(body_data) {
-                                if let Ok(text) = String::from_utf8(decoded) {
-                                    existing_body = text;
-                                    break;
-                                }
-                            }
+            if mime_type == "text/plain" {
+                if let Some(body_data) = part["body"]["data"].as_str() {
+                    // Gmail uses URL-safe base64 - try with padding first, then without
+                    let decoded = URL_SAFE.decode(body_data)
+                        .or_else(|_| URL_SAFE_NO_PAD.decode(body_data));
+                    if let Ok(decoded) = decoded {
+                        if let Ok(text) = String::from_utf8(decoded) {
+                            return Some(text);
+                        }
+                    }
+                }
+            } else if mime_type.starts_with("multipart/") {
+                if let Some(parts) = part["parts"].as_array() {
+                    for nested_part in parts {
+                        if let Some(text) = extract_text_body_recursive(nested_part) {
+                            return Some(text);
                         }
                     }
                 }
             }
-        } else if let Some(body_data) = payload["body"]["data"].as_str() {
-            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-            if let Ok(decoded) = URL_SAFE_NO_PAD.decode(body_data) {
-                if let Ok(text) = String::from_utf8(decoded) {
-                    existing_body = text;
-                }
-            }
+            None
+        }
+
+        // Extract existing body
+        let payload = &existing["message"]["payload"];
+        if let Some(text) = extract_text_body_recursive(payload) {
+            existing_body = text;
         }
 
         // Use provided values or fall back to existing

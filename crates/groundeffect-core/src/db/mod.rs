@@ -32,6 +32,19 @@ pub const EMAILS_TABLE: &str = "emails";
 pub const EVENTS_TABLE: &str = "events";
 pub const ACCOUNTS_TABLE: &str = "accounts";
 
+/// Date validation constants for sync boundary calculations.
+/// Dates outside this range are ignored to prevent a single bad record from breaking sync.
+const MIN_VALID_YEAR: i32 = 1970;
+const MAX_VALID_YEAR_OFFSET: i32 = 30; // current_year + 30
+
+/// Check if a date is within a reasonable range for sync boundary calculations.
+/// This prevents malformed dates (e.g., year 9474) from affecting sync logic.
+fn is_reasonable_date(dt: &DateTime<Utc>) -> bool {
+    use chrono::Datelike;
+    let max_year = Utc::now().year() + MAX_VALID_YEAR_OFFSET;
+    dt.year() >= MIN_VALID_YEAR && dt.year() <= max_year
+}
+
 /// LanceDB database wrapper
 pub struct Database {
     connection: Connection,
@@ -908,6 +921,10 @@ impl Database {
             {
                 for i in 0..batch.num_rows() {
                     if let Some(ts) = DateTime::from_timestamp(date_col.value(i), 0) {
+                        // Skip unreasonable dates to prevent bad data from breaking sync
+                        if !is_reasonable_date(&ts) {
+                            continue;
+                        }
                         oldest = Some(match oldest {
                             Some(current) if ts < current => ts,
                             Some(current) => current,
@@ -957,6 +974,11 @@ impl Database {
                     } else {
                         continue;
                     };
+
+                    // Skip unreasonable dates to prevent bad data from breaking sync
+                    if !is_reasonable_date(&dt) {
+                        continue;
+                    }
 
                     oldest = Some(match oldest {
                         Some(current) if dt < current => dt,
