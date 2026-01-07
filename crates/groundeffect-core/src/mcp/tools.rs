@@ -2055,12 +2055,17 @@ Content-Type: text/html; charset=utf-8
         let reply_to_id = args["reply_to_id"].as_str();
         let mut in_reply_to = None;
         let mut references = None;
+        let mut thread_id: Option<String> = None;
         let mut final_subject = subject.to_string();
 
         if let Some(reply_id) = reply_to_id {
             if let Ok(Some(original)) = self.db.get_email(reply_id).await {
                 in_reply_to = Some(original.message_id.clone());
                 references = Some(original.message_id.clone());
+                // Gmail thread ID is stored as u64, convert to string for API
+                if original.gmail_thread_id != 0 {
+                    thread_id = Some(original.gmail_thread_id.to_string());
+                }
                 if !final_subject.starts_with("Re:") && !final_subject.starts_with("RE:") {
                     final_subject = format!("Re: {}", original.subject);
                 }
@@ -2092,12 +2097,24 @@ Content-Type: text/html; charset=utf-8
         let access_token = self.oauth.get_valid_token(&from_email).await?;
         let client = reqwest::Client::new();
 
+        // Build request body - include threadId if replying to enable proper threading
+        let request_body = if let Some(ref tid) = thread_id {
+            serde_json::json!({
+                "message": {
+                    "raw": encoded,
+                    "threadId": tid
+                }
+            })
+        } else {
+            serde_json::json!({
+                "message": { "raw": encoded }
+            })
+        };
+
         let response = client
             .post("https://gmail.googleapis.com/gmail/v1/users/me/drafts")
             .bearer_auth(&access_token)
-            .json(&serde_json::json!({
-                "message": { "raw": encoded }
-            }))
+            .json(&request_body)
             .send()
             .await?;
 

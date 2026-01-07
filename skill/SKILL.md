@@ -25,12 +25,13 @@ groundeffect email folders                     # List IMAP folders
 
 ### Draft Commands
 ```bash
-groundeffect email draft create --from-account X --to X --subject "X" --body "X"  # Create draft
-groundeffect email draft list --from-account X           # List drafts
-groundeffect email draft show <id> --from-account X      # Show draft
-groundeffect email draft update <id> --from-account X --body "X"  # Update draft
-groundeffect email draft send <id> --from-account X      # Send draft
-groundeffect email draft delete <id> --from-account X    # Delete draft
+groundeffect email draft create --from X --to X --subject "X" --body "X"  # Create draft
+groundeffect email draft create --from X --to X --subject "X" --body "X" --reply-to <email_id>  # Reply draft
+groundeffect email draft list --from X                   # List drafts
+groundeffect email draft show --from X --draft-id <id>   # Show draft
+groundeffect email draft update --from X --draft-id <id> --body "X"  # Update draft
+groundeffect email draft send --from X --draft-id <id>   # Send draft
+groundeffect email draft delete --from X --draft-id <id> # Delete draft
 ```
 
 ### Calendar Commands
