@@ -1058,11 +1058,13 @@ TO CUSTOMIZE SETTINGS:
 
 EXAMPLES:
   groundeffect daemon install
-  groundeffect daemon install --logging")]
+  groundeffect daemon install --logging true
+  groundeffect daemon install --logging false")]
     Install {
         /// Enable file logging to ~/.local/share/groundeffect/logs/
+        /// If not specified, preserves existing config or defaults to false.
         #[arg(long)]
-        logging: bool,
+        logging: Option<bool>,
         /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
@@ -2479,7 +2481,7 @@ fn format_bytes(bytes: u64) -> String {
 // Daemon Install/Uninstall Functions
 // ============================================================================
 
-fn daemon_install(logging: bool, human: bool) -> Result<()> {
+fn daemon_install(logging: Option<bool>, human: bool) -> Result<()> {
     let plist_path = DaemonConfig::launchd_plist_path();
 
     // Check if already installed
@@ -2493,9 +2495,13 @@ fn daemon_install(logging: bool, human: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Create config with smart defaults
-    let mut daemon_config = DaemonConfig::default();
-    daemon_config.logging_enabled = logging;
+    // Load existing config or create defaults
+    let mut daemon_config = DaemonConfig::load().unwrap_or_default();
+
+    // Only override logging if explicitly specified
+    if let Some(log_enabled) = logging {
+        daemon_config.logging_enabled = log_enabled;
+    }
     daemon_config.save()?;
 
     // Find daemon binary
