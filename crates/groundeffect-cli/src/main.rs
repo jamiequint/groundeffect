@@ -3084,7 +3084,8 @@ async fn config_add_permissions() -> Result<()> {
     use std::path::PathBuf;
 
     let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
-    let settings_path = PathBuf::from(&home).join(".claude").join("settings.json");
+    let home_path = PathBuf::from(&home);
+    let settings_path = home_path.join(".claude").join("settings.json");
 
     let permission = "Bash(groundeffect:*)";
 
@@ -3113,16 +3114,54 @@ async fn config_add_permissions() -> Result<()> {
     if allow_list.iter().any(|v| v.as_str() == Some(permission)) {
         println!("✓ groundeffect already in Claude Code allowlist");
         println!("  {}", settings_path.display());
-        return Ok(());
+    } else {
+        allow_list.push(serde_json::json!(permission));
+
+        let content = serde_json::to_string_pretty(&settings)?;
+        fs::write(&settings_path, content)?;
+
+        println!("✓ Added groundeffect to Claude Code allowlist");
+        println!("  {}", settings_path.display());
     }
 
-    allow_list.push(serde_json::json!(permission));
+    // Install skill files to ~/.claude/skills/groundeffect/
+    // Look for skill source in common locations
+    let skill_dest = home_path.join(".claude").join("skills").join("groundeffect");
+    let skill_sources = [
+        // Homebrew share directory
+        PathBuf::from("/opt/homebrew/share/groundeffect/skill"),
+        // Intel Mac homebrew
+        PathBuf::from("/usr/local/share/groundeffect/skill"),
+    ];
 
-    let content = serde_json::to_string_pretty(&settings)?;
-    fs::write(&settings_path, content)?;
+    if let Some(skill_source) = skill_sources.iter().find(|p| p.exists()) {
+        // Remove existing and recreate
+        if skill_dest.exists() {
+            fs::remove_dir_all(&skill_dest)?;
+        }
+        fs::create_dir_all(&skill_dest)?;
 
-    println!("✓ Added groundeffect to Claude Code allowlist");
-    println!("  {}", settings_path.display());
+        // Copy all files recursively
+        fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<()> {
+            for entry in fs::read_dir(src)? {
+                let entry = entry?;
+                let src_path = entry.path();
+                let dst_path = dst.join(entry.file_name());
+
+                if src_path.is_dir() {
+                    fs::create_dir_all(&dst_path)?;
+                    copy_dir_recursive(&src_path, &dst_path)?;
+                } else {
+                    fs::copy(&src_path, &dst_path)?;
+                }
+            }
+            Ok(())
+        }
+
+        copy_dir_recursive(skill_source, &skill_dest)?;
+        println!("✓ Installed groundeffect skill");
+        println!("  {}", skill_dest.display());
+    }
 
     Ok(())
 }
