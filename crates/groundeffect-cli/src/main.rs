@@ -3126,6 +3126,8 @@ async fn config_add_permissions() -> Result<()> {
 
     // Install skill files to ~/.claude/skills/groundeffect/
     // Look for skill source in common locations
+    // Note: This may fail during homebrew post_install due to sandbox restrictions,
+    // so we catch and report errors but don't fail the overall command
     let skill_dest = home_path.join(".claude").join("skills").join("groundeffect");
     let skill_sources = [
         // Homebrew share directory
@@ -3135,32 +3137,43 @@ async fn config_add_permissions() -> Result<()> {
     ];
 
     if let Some(skill_source) = skill_sources.iter().find(|p| p.exists()) {
-        // Remove existing and recreate
-        if skill_dest.exists() {
-            fs::remove_dir_all(&skill_dest)?;
-        }
-        fs::create_dir_all(&skill_dest)?;
-
         // Copy all files recursively
-        fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<()> {
-            for entry in fs::read_dir(src)? {
+        fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
+            for entry in std::fs::read_dir(src)? {
                 let entry = entry?;
                 let src_path = entry.path();
                 let dst_path = dst.join(entry.file_name());
 
                 if src_path.is_dir() {
-                    fs::create_dir_all(&dst_path)?;
+                    std::fs::create_dir_all(&dst_path)?;
                     copy_dir_recursive(&src_path, &dst_path)?;
                 } else {
-                    fs::copy(&src_path, &dst_path)?;
+                    std::fs::copy(&src_path, &dst_path)?;
                 }
             }
             Ok(())
         }
 
-        copy_dir_recursive(skill_source, &skill_dest)?;
-        println!("✓ Installed groundeffect skill");
-        println!("  {}", skill_dest.display());
+        let install_result = (|| -> std::io::Result<()> {
+            if skill_dest.exists() {
+                fs::remove_dir_all(&skill_dest)?;
+            }
+            fs::create_dir_all(&skill_dest)?;
+            copy_dir_recursive(skill_source, &skill_dest)?;
+            Ok(())
+        })();
+
+        match install_result {
+            Ok(()) => {
+                println!("✓ Installed groundeffect skill");
+                println!("  {}", skill_dest.display());
+            }
+            Err(e) => {
+                // Don't fail the command, just note that manual installation may be needed
+                eprintln!("Note: Could not install skill files ({})", e);
+                eprintln!("  Run 'groundeffect config add-permissions' outside of homebrew to install skills");
+            }
+        }
     }
 
     Ok(())
