@@ -249,7 +249,8 @@ impl SyncManager {
             .map(|o| o.date_naive() <= target_since.date_naive())
             .unwrap_or(false);
 
-        let (resume_mode, fetch_since) = if backfill_complete {
+        // fetch_before: Some(date) for backfill mode to limit search range, None for incremental
+        let (resume_mode, fetch_since, fetch_before) = if backfill_complete {
             // Backfill complete - only need incremental sync for new emails
             let incremental_since = account.last_sync_email
                 .map(|t| t - Duration::hours(1)) // 1 hour buffer for safety
@@ -260,21 +261,24 @@ impl SyncManager {
                 incremental_since.format("%Y-%m-%d %H:%M"),
                 existing_count
             );
-            (false, incremental_since)
+            (false, incremental_since, None)
         } else if let Some(oldest) = oldest_synced {
-            // Backfill incomplete - continue from target_since with deduplication
+            // Backfill incomplete - only fetch the missing date range
+            // Add 2-day buffer on both ends to catch boundary/timezone edge cases
+            // (IMAP search will also add buffer to the before date)
+            let since_with_buffer = target_since - Duration::days(2);
             info!(
                 "Continuing backfill for {} from {} to {} (had {} emails)",
                 account_id,
-                target_since.format("%Y-%m-%d"),
+                since_with_buffer.format("%Y-%m-%d"),
                 oldest.format("%Y-%m-%d"),
                 existing_count
             );
-            (true, target_since)
+            (true, since_with_buffer, Some(oldest))
         } else {
             // Fresh sync - fetch all emails back to target_since
             info!("Fresh sync for {} back to {}", account_id, target_since.format("%Y-%m-%d"));
-            (false, target_since)
+            (false, target_since, None)
         };
 
         // Skip email sync if very recent (within last 5 minutes) and backfill complete
@@ -353,7 +357,8 @@ impl SyncManager {
             let progress_file_path = self.config.sync_progress_file();
 
             // Use single connection to fetch emails (incremental or backfill depending on fetch_since)
-            let result = imap_client.fetch_all_emails_since(fetch_since, batch_size, |emails| {
+            // fetch_before limits the date range during backfill to avoid re-fetching all emails
+            let result = imap_client.fetch_all_emails_since(fetch_since, fetch_before, batch_size, |emails| {
                 let total_synced = total_synced_clone.clone();
                 let total_new = total_new_clone.clone();
                 let account_states = account_states_clone.clone();

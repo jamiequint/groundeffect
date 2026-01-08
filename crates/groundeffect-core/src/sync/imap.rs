@@ -177,11 +177,14 @@ impl ImapClient {
         Ok(count)
     }
 
-    /// Fetch all emails since a date, newest first, with automatic reconnection on failure
+    /// Fetch all emails in a date range, newest first, with automatic reconnection on failure
     /// Returns emails in batches via callback to allow incremental processing
+    /// If `before` is Some, fetches emails SINCE `since` AND BEFORE `before` (for backfill)
+    /// If `before` is None, fetches all emails SINCE `since` (for incremental sync)
     pub async fn fetch_all_emails_since<F, Fut>(
         &self,
         since: DateTime<Utc>,
+        before: Option<DateTime<Utc>>,
         batch_size: usize,
         mut on_batch: F,
     ) -> Result<usize>
@@ -202,9 +205,16 @@ impl ImapClient {
                 .map_err(|e| Error::Imap(format!("Failed to select INBOX after reconnect: {:?}", e)))?;
         }
 
-        // Search for emails since the given date
+        // Search for emails in date range
+        // Add 2-day buffer to before date to catch emails at boundaries and timezone edge cases
         let since_str = since.format("%d-%b-%Y").to_string();
-        let search_query = format!("SINCE {}", since_str);
+        let search_query = if let Some(before_date) = before {
+            let before_with_buffer = before_date + chrono::Duration::days(2);
+            let before_str = before_with_buffer.format("%d-%b-%Y").to_string();
+            format!("SINCE {} BEFORE {}", since_str, before_str)
+        } else {
+            format!("SINCE {}", since_str)
+        };
 
         self.rate_limiter.wait().await;
         let uids = session
@@ -217,7 +227,11 @@ impl ImapClient {
         uids.sort_by(|a, b| b.cmp(a)); // Descending order
 
         let total_count = uids.len();
-        info!("Found {} emails since {} for {}", total_count, since_str, self.account_id);
+        if let Some(before_date) = before {
+            info!("Found {} emails from {} to {} for {}", total_count, since_str, before_date.format("%d-%b-%Y"), self.account_id);
+        } else {
+            info!("Found {} emails since {} for {}", total_count, since_str, self.account_id);
+        }
 
         if uids.is_empty() {
             session.logout().await.ok();
