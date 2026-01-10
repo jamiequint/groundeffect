@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.8"
+version = "0.3.9"
 edition = "2021"
 authors = ["Jamie Quint"]
 license = "MIT"
@@ -50,6 +50,7 @@ governor = "0.8"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 uuid = { version = "1.11", features = ["v4", "serde"] }
 dirs = "5.0"
 tokio-util = { version = "0.7", features = ["compat"] }

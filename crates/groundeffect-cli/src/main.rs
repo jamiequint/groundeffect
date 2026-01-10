@@ -5,7 +5,8 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
@@ -1140,9 +1141,11 @@ CONFIGURABLE SETTINGS:
   --email-interval <secs>    Email poll interval (60-3600 seconds)
   --calendar-interval <secs> Calendar poll interval (60-3600 seconds)
   --max-fetches <num>        Max concurrent fetches (1-50)
+  --timezone <tz>            User timezone (e.g., America/Los_Angeles, UTC)
 
-CONFIG FILE:
-  ~/.config/groundeffect/daemon.toml
+CONFIG FILES:
+  ~/.config/groundeffect/daemon.toml (daemon settings)
+  ~/.config/groundeffect/config.toml (general settings including timezone)
 
 Note: Changes require a daemon restart to take effect.
 
@@ -1168,6 +1171,9 @@ EXAMPLES:
         /// Max concurrent fetches (1-50)
         #[arg(long)]
         max_fetches: Option<u32>,
+        /// User timezone (e.g., America/Los_Angeles, UTC, Europe/London)
+        #[arg(long)]
+        timezone: Option<String>,
         /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
@@ -1396,7 +1402,7 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
             let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
                 .unwrap_or(EmbeddingModel::MiniLML6);
             let embedding = Arc::new(
-                EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_metal)?
+                EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
             );
 
             let search_engine = SearchEngine::new(db.clone(), embedding);
@@ -1418,8 +1424,8 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
             options.folder = folder;
             options.from = from;
             options.to = to;
-            options.date_from = parse_date(&after);
-            options.date_to = parse_date(&before);
+            options.date_from = parse_date(&after, &config.general.timezone);
+            options.date_to = parse_date(&before, &config.general.timezone);
             options.has_attachment = if has_attachment { Some(true) } else { None };
 
             let results = search_engine.search_emails(&query, &options).await?;
@@ -1635,7 +1641,7 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
             let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
                 .unwrap_or(EmbeddingModel::MiniLML6);
             let embedding = Arc::new(
-                EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_metal)?
+                EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
             );
 
             let search_engine = SearchEngine::new(db.clone(), embedding);
@@ -1656,8 +1662,8 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                 accounts,
                 limit: limit.min(100),
                 calendar_id: calendar,
-                date_from: parse_date(&after),
-                date_to: parse_date(&before),
+                date_from: parse_date(&after, &config.general.timezone),
+                date_to: parse_date(&before, &config.general.timezone),
             };
 
             let results = search_engine.search_calendar(&query, &options).await?;
@@ -2437,11 +2443,26 @@ fn resolve_account(accounts: &[Account], query: &str) -> Option<String> {
         .map(|a| a.id.clone())
 }
 
-fn parse_date(date_str: &Option<String>) -> Option<DateTime<Utc>> {
+/// Parse a date string in the user's timezone and convert to UTC.
+///
+/// If timezone parsing fails, falls back to UTC.
+fn parse_date(date_str: &Option<String>, timezone: &str) -> Option<DateTime<Utc>> {
     date_str.as_ref().and_then(|s| {
-        NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .ok()
-            .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().map(|d| {
+            let naive_dt = d.and_hms_opt(0, 0, 0).unwrap();
+
+            // Try to parse the timezone, fallback to UTC
+            if let Ok(tz) = timezone.parse::<Tz>() {
+                // Convert from user's timezone to UTC
+                tz.from_local_datetime(&naive_dt)
+                    .single()
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|| naive_dt.and_utc())
+            } else {
+                // Invalid timezone string, treat as UTC
+                naive_dt.and_utc()
+            }
+        })
     })
 }
 
@@ -3079,8 +3100,8 @@ async fn handle_config_command(command: ConfigCommands) -> Result<()> {
     match command {
         ConfigCommands::AddPermissions => config_add_permissions().await,
         ConfigCommands::RemovePermissions => config_remove_permissions().await,
-        ConfigCommands::Settings { logging, email_interval, calendar_interval, max_fetches, human } => {
-            config_settings(logging, email_interval, calendar_interval, max_fetches, human).await
+        ConfigCommands::Settings { logging, email_interval, calendar_interval, max_fetches, timezone, human } => {
+            config_settings(logging, email_interval, calendar_interval, max_fetches, timezone, human).await
         }
     }
 }
@@ -4035,12 +4056,14 @@ async fn config_settings(
     email_interval: Option<u64>,
     calendar_interval: Option<u64>,
     max_fetches: Option<u32>,
+    timezone: Option<String>,
     human: bool,
 ) -> Result<()> {
     let mut daemon_config = DaemonConfig::load().unwrap_or_default();
+    let mut config = Config::load().unwrap_or_default();
     let mut changes = vec![];
 
-    // Apply changes if provided
+    // Apply daemon config changes
     if let Some(l) = logging {
         if daemon_config.logging_enabled != l {
             daemon_config.logging_enabled = l;
@@ -4072,19 +4095,45 @@ async fn config_settings(
         }
     }
 
-    // Save if changes were made
-    if !changes.is_empty() {
+    // Apply general config changes (timezone)
+    let mut general_config_changed = false;
+    if let Some(tz) = &timezone {
+        // Validate timezone by trying to parse it
+        if tz.parse::<chrono_tz::Tz>().is_ok() || tz == "UTC" {
+            if config.general.timezone != *tz {
+                config.general.timezone = tz.clone();
+                changes.push(format!("timezone: {}", tz));
+                general_config_changed = true;
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "Invalid timezone '{}'. Use IANA timezone names like 'America/Los_Angeles', 'Europe/London', or 'UTC'.",
+                tz
+            ));
+        }
+    }
+
+    // Save configs if changes were made
+    let daemon_config_changed = changes.iter().any(|c|
+        c.starts_with("logging") || c.starts_with("email_poll") ||
+        c.starts_with("calendar_poll") || c.starts_with("max_concurrent")
+    );
+    if daemon_config_changed {
         daemon_config.save()?;
+    }
+    if general_config_changed {
+        config.save()?;
     }
 
     if human {
-        println!("\n⚙️  Daemon Settings");
+        println!("\n⚙️  Settings");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("Timezone: {}", config.general.timezone);
         println!("Logging enabled: {}", daemon_config.logging_enabled);
         println!("Email poll interval: {} seconds", daemon_config.email_poll_interval_secs);
         println!("Calendar poll interval: {} seconds", daemon_config.calendar_poll_interval_secs);
         println!("Max concurrent fetches: {}", daemon_config.max_concurrent_fetches);
-        println!("\nConfig file: {:?}", DaemonConfig::config_path());
+        println!("\nDaemon config: {:?}", DaemonConfig::config_path());
 
         if !changes.is_empty() {
             println!("\nChanges made:");
@@ -4096,12 +4145,13 @@ async fn config_settings(
     } else {
         println!("{}", serde_json::to_string_pretty(&serde_json::json!({
             "settings": {
+                "timezone": config.general.timezone,
                 "logging_enabled": daemon_config.logging_enabled,
                 "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
                 "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
                 "max_concurrent_fetches": daemon_config.max_concurrent_fetches,
             },
-            "config_path": DaemonConfig::config_path().to_string_lossy(),
+            "daemon_config_path": DaemonConfig::config_path().to_string_lossy(),
             "changes": changes
         }))?);
     }

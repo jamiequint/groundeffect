@@ -63,25 +63,22 @@ pub struct EmbeddingEngine {
 
 impl EmbeddingEngine {
     /// Create a new embedding engine
-    pub fn new(model_type: EmbeddingModel, use_metal: bool) -> Result<Self> {
+    ///
+    /// The `use_gpu` parameter enables GPU acceleration:
+    /// - On macOS with `metal` feature: Uses Metal
+    /// - On Linux with `cuda` feature: Uses CUDA
+    /// - Otherwise: Falls back to CPU
+    pub fn new(model_type: EmbeddingModel, use_gpu: bool) -> Result<Self> {
         info!(
-            "Initializing embedding engine with model {:?}, metal={}",
-            model_type, use_metal
+            "Initializing embedding engine with model {:?}, gpu={}",
+            model_type, use_gpu
         );
 
-        // Select device
-        let device = if use_metal {
-            match Device::new_metal(0) {
-                Ok(d) => {
-                    info!("Using Metal device for embeddings");
-                    d
-                }
-                Err(e) => {
-                    warn!("Metal not available, falling back to CPU: {}", e);
-                    Device::Cpu
-                }
-            }
+        // Select device - try GPU acceleration if enabled
+        let device = if use_gpu {
+            Self::select_gpu_device()
         } else {
+            info!("GPU disabled, using CPU for embeddings");
             Device::Cpu
         };
 
@@ -136,7 +133,7 @@ impl EmbeddingEngine {
     }
 
     /// Load from a local cache directory
-    pub fn from_cache(cache_dir: impl AsRef<Path>, model_type: EmbeddingModel, use_metal: bool) -> Result<Self> {
+    pub fn from_cache(cache_dir: impl AsRef<Path>, model_type: EmbeddingModel, use_gpu: bool) -> Result<Self> {
         let cache_dir = cache_dir.as_ref();
         let model_dir = cache_dir.join(model_type.model_id().replace("/", "--"));
 
@@ -146,7 +143,51 @@ impl EmbeddingEngine {
             std::env::set_var("HF_HOME", cache_dir);
         }
 
-        Self::new(model_type, use_metal)
+        Self::new(model_type, use_gpu)
+    }
+
+    /// Select the best available GPU device based on compiled features
+    fn select_gpu_device() -> Device {
+        // Try Metal first (macOS)
+        #[cfg(feature = "metal")]
+        {
+            match Device::new_metal(0) {
+                Ok(d) => {
+                    info!("Using Metal GPU for embeddings");
+                    return d;
+                }
+                Err(e) => {
+                    warn!("Metal not available: {}", e);
+                }
+            }
+        }
+
+        // Try CUDA (Linux with NVIDIA GPU)
+        #[cfg(feature = "cuda")]
+        {
+            match Device::new_cuda(0) {
+                Ok(d) => {
+                    info!("Using CUDA GPU for embeddings");
+                    return d;
+                }
+                Err(e) => {
+                    warn!("CUDA not available: {}", e);
+                }
+            }
+        }
+
+        // Fallback to CPU
+        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        {
+            info!("No GPU features enabled, using CPU for embeddings");
+        }
+
+        #[cfg(any(feature = "metal", feature = "cuda"))]
+        {
+            warn!("GPU requested but not available, falling back to CPU");
+        }
+
+        Device::Cpu
     }
 
     /// Generate embedding for a single text

@@ -9,6 +9,11 @@ license.workspace = true
 name = "groundeffect-daemon"
 path = "src/main.rs"
 
+[features]
+default = []
+metal = ["groundeffect-core/metal"]
+cuda = ["groundeffect-core/cuda"]
+
 [dependencies]
 groundeffect-core = { workspace = true }
 tokio = { workspace = true }

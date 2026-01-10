@@ -9,11 +9,17 @@ license.workspace = true
 name = "groundeffect"
 path = "src/main.rs"
 
+[features]
+default = []
+metal = ["groundeffect-core/metal"]
+cuda = ["groundeffect-core/cuda"]
+
 [dependencies]
 groundeffect-core = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
 dirs = { workspace = true }
 serde = { workspace = true }

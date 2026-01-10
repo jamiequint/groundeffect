@@ -207,6 +207,7 @@ Use `calendar events` to answer questions like "what's on my calendar tomorrow" 
 | `--email-interval` | Email poll interval in seconds (60-3600) | 300 |
 | `--calendar-interval` | Calendar poll interval in seconds (60-3600) | 300 |
 | `--max-fetches` | Max concurrent fetches (1-50) | 10 |
+| `--timezone` | User timezone for date parsing (e.g., America/Los_Angeles) | UTC |
 
 ## MCP Integration (Alternative)
 

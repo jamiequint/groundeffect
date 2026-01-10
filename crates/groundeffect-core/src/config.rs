@@ -56,6 +56,16 @@ pub struct GeneralConfig {
     /// Data directory path
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
+
+    /// User's timezone for date parsing and display (e.g., "America/Los_Angeles", "UTC")
+    /// Used when parsing relative dates like "today" or date ranges in search queries
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
+}
+
+fn default_timezone() -> String {
+    // Try to detect system timezone, fallback to UTC
+    std::env::var("TZ").unwrap_or_else(|_| "UTC".to_string())
 }
 
 impl Default for GeneralConfig {
@@ -64,6 +74,7 @@ impl Default for GeneralConfig {
             log_level: default_log_level(),
             log_file: default_log_file(),
             data_dir: default_data_dir(),
+            timezone: default_timezone(),
         }
     }
 }
@@ -116,9 +127,9 @@ pub struct SearchConfig {
     #[serde(default = "default_embedding_model")]
     pub embedding_model: String,
 
-    /// Use Metal GPU acceleration
-    #[serde(default = "default_true")]
-    pub use_metal: bool,
+    /// Use GPU acceleration (Metal on macOS, CUDA on Linux)
+    #[serde(default = "default_true", alias = "use_metal")]
+    pub use_gpu: bool,
 
     /// BM25 weight in hybrid search (0.0-1.0)
     #[serde(default = "default_search_weight")]
@@ -133,7 +144,7 @@ impl Default for SearchConfig {
     fn default() -> Self {
         Self {
             embedding_model: default_embedding_model(),
-            use_metal: true,
+            use_gpu: true,
             bm25_weight: 0.5,
             vector_weight: 0.5,
         }
@@ -243,7 +254,7 @@ fn default_rate_limit() -> u32 {
 }
 
 fn default_embedding_model() -> String {
-    "all-minilm-l6-v2".to_string()  // MiniLM works with Candle's BertConfig
+    "nomic-embed-text-v1.5".to_string()
 }
 
 fn default_search_weight() -> f32 {

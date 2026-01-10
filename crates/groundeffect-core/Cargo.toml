@@ -41,6 +41,7 @@ governor = { workspace = true }
 
 # Utilities
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 uuid = { workspace = true }
 dirs = { workspace = true }
 tokio-util = { workspace = true }
@@ -64,5 +65,6 @@ html2text = { workspace = true }
 regex = { workspace = true }
 
 [features]
-default = ["metal"]
+default = []
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]

@@ -18,8 +18,8 @@ pub use config::Config;
 pub use error::{Error, Result};
 pub use models::*;
 
-/// Vector dimension for embeddings (384 for all-MiniLM-L6-v2)
-pub const EMBEDDING_DIMENSION: usize = 384;
+/// Vector dimension for embeddings (768 for nomic-embed-text-v1.5)
+pub const EMBEDDING_DIMENSION: usize = 768;
 
 /// Application name for config paths
 pub const APP_NAME: &str = "groundeffect";

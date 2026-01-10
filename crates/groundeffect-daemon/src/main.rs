@@ -443,7 +443,7 @@ async fn run_daemon() -> Result<()> {
     let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
         .unwrap_or(EmbeddingModel::MiniLML6); // MiniLM works with Candle's BertConfig
     let embedding = Arc::new(
-        EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_metal)
+        EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)
             .map_err(|e| {
                 error!("Failed to load embedding model: {}", e);
                 e
@@ -674,7 +674,7 @@ async fn run_mcp_server() -> Result<()> {
     let embedding = Arc::new(EmbeddingEngine::from_cache(
         config.models_dir(),
         model_type,
-        config.search.use_metal,
+        config.search.use_gpu,
     )?);
 
     // Initialize OAuth manager

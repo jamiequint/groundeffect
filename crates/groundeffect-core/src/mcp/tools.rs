@@ -3,7 +3,8 @@
 use std::sync::Arc;
 use std::process::Command;
 
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -1427,16 +1428,23 @@ Content-Type: text/html; charset=utf-8
                     .collect::<Vec<_>>()
             });
 
-        // Parse date filters (format: YYYY-MM-DD)
+        // Parse date filters (format: YYYY-MM-DD) with timezone support
+        let tz: Tz = self.config.general.timezone.parse().unwrap_or(Tz::UTC);
         let date_from = args["date_from"].as_str().and_then(|s| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .ok()
-                .map(|d| d.and_time(NaiveTime::MIN).and_utc())
+            NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|d| {
+                let naive_dt = d.and_time(NaiveTime::MIN);
+                tz.from_local_datetime(&naive_dt)
+                    .single()
+                    .map(|dt| dt.with_timezone(&Utc))
+            })
         });
         let date_to = args["date_to"].as_str().and_then(|s| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .ok()
-                .map(|d| d.and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap()).and_utc())
+            NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|d| {
+                let naive_dt = d.and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+                tz.from_local_datetime(&naive_dt)
+                    .single()
+                    .map(|dt| dt.with_timezone(&Utc))
+            })
         });
 
         let options = SearchOptions {
@@ -2665,16 +2673,23 @@ Content-Type: text/html; charset=utf-8
                     .collect::<Vec<_>>()
             });
 
-        // Parse date filters (format: YYYY-MM-DD)
+        // Parse date filters (format: YYYY-MM-DD) with timezone support
+        let tz: Tz = self.config.general.timezone.parse().unwrap_or(Tz::UTC);
         let date_from = args["date_from"].as_str().and_then(|s| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .ok()
-                .map(|d| d.and_time(NaiveTime::MIN).and_utc())
+            NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|d| {
+                let naive_dt = d.and_time(NaiveTime::MIN);
+                tz.from_local_datetime(&naive_dt)
+                    .single()
+                    .map(|dt| dt.with_timezone(&Utc))
+            })
         });
         let date_to = args["date_to"].as_str().and_then(|s| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .ok()
-                .map(|d| d.and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap()).and_utc())
+            NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|d| {
+                let naive_dt = d.and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+                tz.from_local_datetime(&naive_dt)
+                    .single()
+                    .map(|dt| dt.with_timezone(&Utc))
+            })
         });
 
         let options = CalendarSearchOptions {
@@ -2720,15 +2735,16 @@ Content-Type: text/html; charset=utf-8
 
     /// List calendar events in a date range (no semantic search required)
     async fn list_calendar_events(&self, args: &Value) -> Result<Value> {
-        // Get date range
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        // Get date range using user's timezone for "today"
+        let tz: Tz = self.config.general.timezone.parse().unwrap_or(Tz::UTC);
+        let today = chrono::Utc::now().with_timezone(&tz).format("%Y-%m-%d").to_string();
         let from = args["from"].as_str().unwrap_or(&today).to_string();
 
         let to = match args["to"].as_str() {
             Some(d) => d.to_string(),
             None => {
                 let from_date = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
-                    .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+                    .unwrap_or_else(|_| chrono::Utc::now().with_timezone(&tz).date_naive());
                 (from_date + chrono::Duration::days(7)).format("%Y-%m-%d").to_string()
             }
         };
