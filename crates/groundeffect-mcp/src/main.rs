@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
 
     // Initialize embedding engine for search queries
     let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
-        .unwrap_or(EmbeddingModel::NomicEmbedText);
+        .unwrap_or(EmbeddingModel::BgeBaseEn);
     let embedding = Arc::new(
         EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)
             .map_err(|e| {

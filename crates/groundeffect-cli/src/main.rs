@@ -1400,7 +1400,7 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
 
             // Initialize embedding engine for vector search
             let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
-                .unwrap_or(EmbeddingModel::MiniLML6);
+                .unwrap_or(EmbeddingModel::BgeBaseEn);
             let embedding = Arc::new(
                 EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
             );
@@ -1639,7 +1639,7 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
 
             // Initialize embedding engine
             let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
-                .unwrap_or(EmbeddingModel::MiniLML6);
+                .unwrap_or(EmbeddingModel::BgeBaseEn);
             let embedding = Arc::new(
                 EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
             );

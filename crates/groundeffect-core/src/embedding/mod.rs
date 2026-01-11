@@ -1,6 +1,6 @@
 //! Embedding pipeline using Candle with Metal acceleration
 //!
-//! Uses nomic-embed-text-v1.5 (or all-MiniLM-L6-v2) for text embeddings.
+//! Uses bge-base-en-v1.5 (or all-MiniLM-L6-v2) for text embeddings.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -19,8 +19,8 @@ use crate::EMBEDDING_DIMENSION;
 /// Supported embedding models
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmbeddingModel {
-    /// nomic-embed-text-v1.5 (768 dimensions)
-    NomicEmbedText,
+    /// bge-base-en-v1.5 (768 dimensions, high quality, standard BERT)
+    BgeBaseEn,
     /// all-MiniLM-L6-v2 (384 dimensions, faster)
     MiniLML6,
 }
@@ -29,7 +29,7 @@ impl EmbeddingModel {
     /// Get the HuggingFace model ID
     pub fn model_id(&self) -> &'static str {
         match self {
-            EmbeddingModel::NomicEmbedText => "nomic-ai/nomic-embed-text-v1.5",
+            EmbeddingModel::BgeBaseEn => "BAAI/bge-base-en-v1.5",
             EmbeddingModel::MiniLML6 => "sentence-transformers/all-MiniLM-L6-v2",
         }
     }
@@ -37,7 +37,7 @@ impl EmbeddingModel {
     /// Get the embedding dimension
     pub fn dimension(&self) -> usize {
         match self {
-            EmbeddingModel::NomicEmbedText => 768,
+            EmbeddingModel::BgeBaseEn => 768,
             EmbeddingModel::MiniLML6 => 384,
         }
     }
@@ -45,7 +45,7 @@ impl EmbeddingModel {
     /// Parse from string
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "nomic-embed-text-v1.5" | "nomic" => Some(EmbeddingModel::NomicEmbedText),
+            "bge-base-en-v1.5" | "bge-base" | "bge" => Some(EmbeddingModel::BgeBaseEn),
             "all-minilm-l6-v2" | "minilm" => Some(EmbeddingModel::MiniLML6),
             _ => None,
         }

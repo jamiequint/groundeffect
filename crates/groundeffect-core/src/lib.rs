@@ -18,7 +18,7 @@ pub use config::Config;
 pub use error::{Error, Result};
 pub use models::*;
 
-/// Vector dimension for embeddings (768 for nomic-embed-text-v1.5)
+/// Vector dimension for embeddings (768 for bge-base-en-v1.5)
 pub const EMBEDDING_DIMENSION: usize = 768;
 
 /// Application name for config paths

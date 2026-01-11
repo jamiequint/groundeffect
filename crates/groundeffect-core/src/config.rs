@@ -254,7 +254,7 @@ fn default_rate_limit() -> u32 {
 }
 
 fn default_embedding_model() -> String {
-    "nomic-embed-text-v1.5".to_string()
+    "bge-base-en-v1.5".to_string()
 }
 
 fn default_search_weight() -> f32 {

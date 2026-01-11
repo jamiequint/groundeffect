@@ -441,7 +441,7 @@ async fn run_daemon() -> Result<()> {
     // Initialize embedding engine
     info!("Loading embedding model...");
     let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
-        .unwrap_or(EmbeddingModel::MiniLML6); // MiniLM works with Candle's BertConfig
+        .unwrap_or(EmbeddingModel::BgeBaseEn); // MiniLM works with Candle's BertConfig
     let embedding = Arc::new(
         EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)
             .map_err(|e| {
@@ -670,7 +670,7 @@ async fn run_mcp_server() -> Result<()> {
 
     // Initialize embedding engine
     let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
-        .unwrap_or(EmbeddingModel::MiniLML6);
+        .unwrap_or(EmbeddingModel::BgeBaseEn);
     let embedding = Arc::new(EmbeddingEngine::from_cache(
         config.models_dir(),
         model_type,
