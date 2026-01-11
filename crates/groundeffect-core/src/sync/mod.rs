@@ -385,7 +385,7 @@ impl SyncManager {
                     let mut successfully_stored = 0;
 
                     // Generate embeddings in batches for performance
-                    const EMBED_BATCH_SIZE: usize = 128;
+                    const EMBED_BATCH_SIZE: usize = 32;
                     const MAX_EMBED_RETRIES: u32 = 3;
 
                     for embed_chunk in new_emails.chunks(EMBED_BATCH_SIZE) {
@@ -635,7 +635,7 @@ impl SyncManager {
 
             // Generate embeddings in batches for performance
             // 128 is optimal for M4 Apple Silicon, use 64 for M1-M3
-            const BATCH_SIZE: usize = 128;
+            const BATCH_SIZE: usize = 32;
             let total = changed_events.len();
             let mut processed = 0;
 
@@ -821,7 +821,7 @@ impl SyncManager {
                         info!("Incremental sync: found {} new emails for {}", emails.len(), account_id);
 
                         // Batch embed and insert for performance
-                        const EMBED_BATCH_SIZE: usize = 128;
+                        const EMBED_BATCH_SIZE: usize = 32;
                         for chunk in emails.chunks(EMBED_BATCH_SIZE) {
                             let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
                             let embeddings = self.embedding.embed_batch(&texts)?;

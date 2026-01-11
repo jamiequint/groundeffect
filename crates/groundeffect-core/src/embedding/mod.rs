@@ -204,7 +204,7 @@ impl EmbeddingEngine {
 
         debug!("Generating embeddings for {} texts", texts.len());
 
-        // Tokenize all texts
+        // Tokenize all texts (CPU work)
         let mut all_input_ids = Vec::new();
         let mut all_attention_masks = Vec::new();
         let mut max_len = 0;
@@ -237,40 +237,46 @@ impl EmbeddingEngine {
             }
         }
 
-        // Convert to tensors
         let batch_size = texts.len();
         let input_ids_flat: Vec<u32> = all_input_ids.into_iter().flatten().collect();
         let attention_mask_flat: Vec<u32> = all_attention_masks.into_iter().flatten().collect();
 
-        let input_ids = Tensor::from_vec(input_ids_flat, (batch_size, max_len), &self.device)
-            .map_err(|e| Error::Embedding(format!("Failed to create input tensor: {}", e)))?;
+        // GPU work in isolated scope - all tensors dropped before sync
+        let embeddings_vec: Vec<f32> = {
+            let input_ids = Tensor::from_vec(input_ids_flat, (batch_size, max_len), &self.device)
+                .map_err(|e| Error::Embedding(format!("Failed to create input tensor: {}", e)))?;
 
-        let attention_mask = Tensor::from_vec(attention_mask_flat, (batch_size, max_len), &self.device)
-            .map_err(|e| Error::Embedding(format!("Failed to create attention tensor: {}", e)))?;
+            let attention_mask = Tensor::from_vec(attention_mask_flat, (batch_size, max_len), &self.device)
+                .map_err(|e| Error::Embedding(format!("Failed to create attention tensor: {}", e)))?;
 
-        let token_type_ids = Tensor::zeros((batch_size, max_len), candle_core::DType::U32, &self.device)
-            .map_err(|e| Error::Embedding(format!("Failed to create token type tensor: {}", e)))?;
+            let token_type_ids = Tensor::zeros((batch_size, max_len), candle_core::DType::U32, &self.device)
+                .map_err(|e| Error::Embedding(format!("Failed to create token type tensor: {}", e)))?;
 
-        // Run model
-        let model = self.model.read();
-        let output = model
-            .forward(&input_ids, &token_type_ids, Some(&attention_mask))
-            .map_err(|e| Error::Embedding(format!("Model forward pass failed: {}", e)))?;
+            // Run model
+            let model = self.model.read();
+            let output = model
+                .forward(&input_ids, &token_type_ids, Some(&attention_mask))
+                .map_err(|e| Error::Embedding(format!("Model forward pass failed: {}", e)))?;
 
-        // Mean pooling over sequence dimension
-        let embeddings = self.mean_pooling(&output, &attention_mask)?;
+            // Mean pooling over sequence dimension
+            let embeddings = self.mean_pooling(&output, &attention_mask)?;
 
-        // Normalize embeddings
-        let embeddings = self.normalize(&embeddings)?;
+            // Normalize embeddings
+            let embeddings = self.normalize(&embeddings)?;
 
-        // Convert to Vec<Vec<f32>>
-        let embeddings_vec: Vec<f32> = embeddings
-            .to_vec2::<f32>()
-            .map_err(|e| Error::Embedding(format!("Failed to convert embeddings: {}", e)))?
-            .into_iter()
-            .flatten()
-            .collect();
+            // Convert to CPU Vec<f32> - last GPU operation
+            embeddings
+                .to_vec2::<f32>()
+                .map_err(|e| Error::Embedding(format!("Failed to convert embeddings: {}", e)))?
+                .into_iter()
+                .flatten()
+                .collect()
+        }; // All GPU tensors dropped here
 
+        // Sync GPU and release buffers AFTER tensors are dropped
+        self.sync();
+
+        // CPU-only work from here
         let dim = self.model_type.dimension();
         let result: Vec<Vec<f32>> = embeddings_vec
             .chunks(dim)
@@ -348,5 +354,20 @@ impl EmbeddingEngine {
     /// Get the device being used
     pub fn device(&self) -> &Device {
         &self.device
+    }
+
+    /// Synchronize the GPU and release unused buffers
+    ///
+    /// This is important for Metal GPU to prevent memory accumulation.
+    /// Should be called after processing batches to force buffer cleanup.
+    pub fn sync(&self) {
+        #[cfg(feature = "metal")]
+        {
+            if let Device::Metal(metal_device) = &self.device {
+                if let Err(e) = metal_device.wait_until_completed() {
+                    warn!("Failed to sync Metal device: {}", e);
+                }
+            }
+        }
     }
 }
