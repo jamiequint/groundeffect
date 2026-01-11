@@ -16,9 +16,32 @@ else
     exit 1
 fi
 
+# Detect OS and set features
+OS=$(uname -s)
+if [ "$OS" = "Darwin" ]; then
+    FEATURES="metal"
+    echo "Detected macOS - enabling Metal GPU acceleration"
+elif [ "$OS" = "Linux" ]; then
+    # Check if CUDA is available
+    if command -v nvidia-smi &> /dev/null; then
+        FEATURES="cuda"
+        echo "Detected Linux with NVIDIA GPU - enabling CUDA acceleration"
+    else
+        FEATURES=""
+        echo "Detected Linux without NVIDIA GPU - using CPU"
+    fi
+else
+    FEATURES=""
+    echo "Unknown OS - using CPU"
+fi
+
 # Build release binaries
 echo "Building release binaries..."
-cargo build --release
+if [ -n "$FEATURES" ]; then
+    cargo build --release --features "$FEATURES"
+else
+    cargo build --release
+fi
 
 # Create dist directory
 DIST_DIR="dist"
