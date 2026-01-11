@@ -67,6 +67,11 @@ pub struct Account {
     /// Whether to sync email attachments for this account
     #[serde(default)]
     pub sync_attachments: bool,
+
+    /// Estimated total emails on IMAP server for the sync period
+    /// Updated by daemon when counting emails to sync
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_total_emails: Option<u64>,
 }
 
 impl Account {
@@ -84,6 +89,7 @@ impl Account {
             oldest_email_synced: None,
             oldest_event_synced: None,
             sync_attachments: false,
+            estimated_total_emails: None,
         }
     }
 

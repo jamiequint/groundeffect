@@ -138,6 +138,16 @@ pub struct SearchConfig {
     /// Vector weight in hybrid search (0.0-1.0)
     #[serde(default = "default_search_weight")]
     pub vector_weight: f32,
+
+    /// Batch size for local embedding generation
+    /// Small values (1-2) for memory-constrained environments, larger (32+) for powerful GPUs
+    #[serde(default = "default_embedding_batch_size")]
+    pub embedding_batch_size: usize,
+
+    /// Minimum texts to use remote GPU embedding service (if configured)
+    /// Below this threshold, use local embedding
+    #[serde(default = "default_embedding_gpu_threshold")]
+    pub embedding_gpu_threshold: usize,
 }
 
 impl Default for SearchConfig {
@@ -147,6 +157,8 @@ impl Default for SearchConfig {
             use_gpu: true,
             bm25_weight: 0.5,
             vector_weight: 0.5,
+            embedding_batch_size: default_embedding_batch_size(),
+            embedding_gpu_threshold: default_embedding_gpu_threshold(),
         }
     }
 }
@@ -259,6 +271,14 @@ fn default_embedding_model() -> String {
 
 fn default_search_weight() -> f32 {
     0.5
+}
+
+fn default_embedding_batch_size() -> usize {
+    1  // Minimal memory footprint, safe for 1GB containers
+}
+
+fn default_embedding_gpu_threshold() -> usize {
+    10  // Route most bulk work to GPU service
 }
 
 fn default_recent_items() -> usize {

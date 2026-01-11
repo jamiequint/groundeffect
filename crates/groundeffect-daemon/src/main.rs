@@ -244,6 +244,7 @@ Content-Type: text/html; charset=utf-8
             oldest_email_synced: None,
             oldest_event_synced: None,
             sync_attachments: false, // Off by default
+            estimated_total_emails: None,
         };
         db.upsert_account(&account).await?;
         println!(" Account created: {}", account.id);

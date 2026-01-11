@@ -307,9 +307,17 @@ impl SyncManager {
                 // Incremental sync - total is just existing + any new we find
                 existing_count
             } else {
-                // Backfill sync - count total in INBOX for progress
-                let count = imap_client.count_emails().await.unwrap_or(0);
-                info!("Account {} has approximately {} emails in INBOX", account_id, count);
+                // Backfill sync - count emails since target date for accurate progress
+                let count = imap_client.count_emails_since(target_since).await.unwrap_or(0);
+                info!("Account {} has approximately {} emails since {}", account_id, count, target_since.format("%Y-%m-%d"));
+
+                // Persist estimated total to database for CLI status
+                let mut updated_account = account.clone();
+                updated_account.estimated_total_emails = Some(count);
+                if let Err(e) = self.db.upsert_account(&updated_account).await {
+                    warn!("Failed to persist estimated_total_emails: {}", e);
+                }
+
                 count
             };
 
@@ -385,10 +393,10 @@ impl SyncManager {
                     let mut successfully_stored = 0;
 
                     // Generate embeddings in batches for performance
-                    const EMBED_BATCH_SIZE: usize = 32;
+                    let embed_batch_size = self.config.search.embedding_batch_size;
                     const MAX_EMBED_RETRIES: u32 = 3;
 
-                    for embed_chunk in new_emails.chunks(EMBED_BATCH_SIZE) {
+                    for embed_chunk in new_emails.chunks(embed_batch_size) {
                         let texts: Vec<String> = embed_chunk.iter().map(|e| e.searchable_text()).collect();
 
                         // Retry embedding with exponential backoff
@@ -634,12 +642,11 @@ impl SyncManager {
             info!("{} new/changed calendar events to process for {}", changed_events.len(), account_id);
 
             // Generate embeddings in batches for performance
-            // 128 is optimal for M4 Apple Silicon, use 64 for M1-M3
-            const BATCH_SIZE: usize = 32;
+            let batch_size = self.config.search.embedding_batch_size;
             let total = changed_events.len();
             let mut processed = 0;
 
-            for chunk in changed_events.chunks(BATCH_SIZE) {
+            for chunk in changed_events.chunks(batch_size) {
                 // Collect texts for batch embedding
                 let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
 
@@ -821,8 +828,8 @@ impl SyncManager {
                         info!("Incremental sync: found {} new emails for {}", emails.len(), account_id);
 
                         // Batch embed and insert for performance
-                        const EMBED_BATCH_SIZE: usize = 32;
-                        for chunk in emails.chunks(EMBED_BATCH_SIZE) {
+                        let embed_batch_size = self.config.search.embedding_batch_size;
+                        for chunk in emails.chunks(embed_batch_size) {
                             let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
                             let embeddings = self.embedding.embed_batch(&texts)?;
 

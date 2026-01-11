@@ -123,6 +123,7 @@ pub fn account_schema() -> Schema {
         Field::new("oldest_email_synced", DataType::Int64, true),
         Field::new("oldest_event_synced", DataType::Int64, true),
         Field::new("sync_attachments", DataType::Boolean, false),
+        Field::new("estimated_total_emails", DataType::Int64, true),
     ])
 }
 
@@ -705,6 +706,9 @@ pub fn account_to_batch(account: &Account) -> Result<RecordBatch> {
             .oldest_event_synced
             .map(|d| d.timestamp())])),
         Arc::new(BooleanArray::from(vec![account.sync_attachments])),
+        Arc::new(Int64Array::from(vec![account
+            .estimated_total_emails
+            .map(|v| v as i64)])),
     ];
 
     let batch = RecordBatch::try_new(Arc::new(schema), arrays)?;
@@ -781,6 +785,8 @@ pub fn batch_to_account_lenient(batch: &RecordBatch, row: usize) -> Result<Accou
     let oldest_event_synced = get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
     // This column may not exist in old schema - defaults to false
     let sync_attachments = get_bool("sync_attachments");
+    // This column may not exist in old schema - defaults to None
+    let estimated_total_emails = get_opt_i64("estimated_total_emails").map(|v| v as u64);
 
     Ok(Account {
         id: get_string("id"),
@@ -794,6 +800,7 @@ pub fn batch_to_account_lenient(batch: &RecordBatch, row: usize) -> Result<Accou
         oldest_email_synced,
         oldest_event_synced,
         sync_attachments,
+        estimated_total_emails,
     })
 }
 
@@ -865,6 +872,7 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
     let oldest_email_synced = get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
     let oldest_event_synced = get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
     let sync_attachments = get_bool("sync_attachments");
+    let estimated_total_emails = get_opt_i64("estimated_total_emails").map(|v| v as u64);
 
     Ok(Account {
         id: get_string("id"),
@@ -878,5 +886,6 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
         oldest_email_synced,
         oldest_event_synced,
         sync_attachments,
+        estimated_total_emails,
     })
 }

@@ -1349,6 +1349,8 @@ struct SyncStatus {
     attachments_size_bytes: u64,
     sync_email_since: Option<String>,
     sync_attachments: bool,
+    estimated_total_emails: Option<u64>,
+    emails_remaining: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -2162,6 +2164,11 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
                 let (oldest_event, newest_event) = db.get_event_sync_boundaries(&account.id).await.unwrap_or((None, None));
                 let (att_total, att_downloaded, att_size) = db.get_attachment_stats(&account.id).await.unwrap_or((0, 0, 0));
 
+                // Calculate remaining emails if we have an estimate
+                let emails_remaining = account.estimated_total_emails.map(|total| {
+                    total.saturating_sub(email_count)
+                });
+
                 let status = SyncStatus {
                     account: account.id.clone(),
                     status: format!("{:?}", account.status),
@@ -2178,6 +2185,8 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
                     attachments_size_bytes: att_size,
                     sync_email_since: account.sync_email_since.map(|d| d.to_rfc3339()),
                     sync_attachments: account.sync_attachments,
+                    estimated_total_emails: account.estimated_total_emails,
+                    emails_remaining,
                 };
 
                 if human {
@@ -2193,7 +2202,17 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
                     if let Some(since) = account.sync_email_since {
                         println!("   ⚙️  Sync since: {}", since.format("%Y-%m-%d"));
                     }
-                    println!("   📨 Emails: {}", email_count);
+                    // Show email count with total and remaining if available
+                    if let Some(total) = account.estimated_total_emails {
+                        let remaining = total.saturating_sub(email_count);
+                        if remaining > 0 {
+                            println!("   📨 Emails: {} / {} ({} remaining)", email_count, total, remaining);
+                        } else {
+                            println!("   📨 Emails: {} (sync complete)", email_count);
+                        }
+                    } else {
+                        println!("   📨 Emails: {}", email_count);
+                    }
                     if let Some(oldest) = &status.oldest_email {
                         println!("      Oldest: {}", oldest);
                     }
@@ -2434,6 +2453,36 @@ fn get_daemon_pid() -> Option<u32> {
                 None
             }
         })
+}
+
+/// Restart the daemon. Returns the method used ("launchd" or "direct") or None if not running.
+fn restart_daemon() -> Option<&'static str> {
+    // Check if daemon is running first
+    if !check_daemon_running() {
+        return None;
+    }
+
+    // Kill existing daemon
+    let _ = std::process::Command::new("pkill")
+        .args(["-f", "groundeffect-daemon"])
+        .output();
+
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    let plist_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join("Library/LaunchAgents/com.groundeffect.daemon.plist");
+
+    if plist_path.exists() {
+        let _ = std::process::Command::new("launchctl")
+            .args(["load", "-w", plist_path.to_str().unwrap()])
+            .output();
+        Some("launchd")
+    } else {
+        let _ = std::process::Command::new("groundeffect-daemon")
+            .spawn();
+        Some("direct")
+    }
 }
 
 fn resolve_account(accounts: &[Account], query: &str) -> Option<String> {
@@ -2889,6 +2938,7 @@ async fn account_add(years: Option<String>, attachments: bool, alias: Option<Str
             oldest_email_synced: None,
             oldest_event_synced: None,
             sync_attachments,
+            estimated_total_emails: None,
         };
         db.upsert_account(&account).await?;
     }
@@ -3877,12 +3927,18 @@ async fn sync_extend(account: &str, target_date: &str, human: bool) -> Result<()
 
     let additional_days = (current_sync_from - target_datetime).num_days();
 
+    // Automatically restart daemon to pick up new sync range
+    let restart_method = restart_daemon();
+
     if human {
         println!("✅ Extended sync range for {}", email);
         println!("   Previous: {}", current_sync_from.format("%Y-%m-%d"));
         println!("   New: {}", target_date);
         println!("   Additional days: {}", additional_days);
-        println!("\nRestart the daemon to sync older data.");
+        match restart_method {
+            Some(method) => println!("\n✓ Daemon restarted via {}", method),
+            None => println!("\nNote: Daemon not running. Start it to sync older data."),
+        }
     } else {
         println!("{}", serde_json::to_string_pretty(&serde_json::json!({
             "success": true,
@@ -3891,7 +3947,9 @@ async fn sync_extend(account: &str, target_date: &str, human: bool) -> Result<()
                 "previous_sync_from": current_sync_from.format("%Y-%m-%d").to_string(),
                 "new_sync_from": target_date,
                 "additional_days": additional_days
-            }
+            },
+            "daemon_restarted": restart_method.is_some(),
+            "restart_method": restart_method
         }))?);
     }
 

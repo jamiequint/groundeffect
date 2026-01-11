@@ -177,6 +177,31 @@ impl ImapClient {
         Ok(count)
     }
 
+    /// Count emails since a specific date using IMAP SEARCH
+    pub async fn count_emails_since(&self, since: DateTime<Utc>) -> Result<u64> {
+        let mut session = self.connect().await?;
+
+        // Select INBOX
+        session
+            .select("INBOX")
+            .await
+            .map_err(|e| Error::Imap(format!("Failed to select INBOX: {:?}", e)))?;
+
+        // Search for emails since the target date
+        let since_str = since.format("%d-%b-%Y").to_string();
+        let search_query = format!("SINCE {}", since_str);
+
+        let uids = session
+            .uid_search(&search_query)
+            .await
+            .map_err(|e| Error::Imap(format!("Failed to search emails: {:?}", e)))?;
+
+        let count = uids.len() as u64;
+        session.logout().await.ok();
+
+        Ok(count)
+    }
+
     /// Fetch all emails in a date range, newest first, with automatic reconnection on failure
     /// Returns emails in batches via callback to allow incremental processing
     /// If `before` is Some, fetches emails SINCE `since` AND BEFORE `before` (for backfill)
