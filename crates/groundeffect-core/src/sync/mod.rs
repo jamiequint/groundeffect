@@ -289,6 +289,14 @@ impl SyncManager {
 
         if skip_email_sync {
             info!("Email sync recently completed for {}, proceeding to calendar", account_id);
+            // Clear stale estimated_total_emails if backfill is complete
+            if account.estimated_total_emails.is_some() {
+                let mut updated_account = account.clone();
+                updated_account.estimated_total_emails = None;
+                if let Err(e) = self.db.upsert_account(&updated_account).await {
+                    warn!("Failed to clear estimated_total_emails: {}", e);
+                }
+            }
         } else {
             // Load existing message_ids for deduplication
             let existing_message_ids = std::sync::Arc::new(
@@ -551,6 +559,14 @@ impl SyncManager {
                 let (new_oldest, _) = self.db.get_email_sync_boundaries(account_id).await.unwrap_or((None, None));
                 if new_oldest.is_some() {
                     account.oldest_email_synced = new_oldest;
+                }
+                // Clear estimated_total_emails if backfill is complete (no longer meaningful)
+                let target = account.sync_email_since.unwrap_or_else(|| Utc::now() - Duration::days(90));
+                let backfill_done = account.oldest_email_synced
+                    .map(|o| o.date_naive() <= target.date_naive())
+                    .unwrap_or(false);
+                if backfill_done && account.estimated_total_emails.is_some() {
+                    account.estimated_total_emails = None;
                 }
                 if let Err(e) = self.db.upsert_account(&account).await {
                     warn!("Failed to persist sync state: {}", e);
