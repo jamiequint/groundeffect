@@ -1,18 +1,22 @@
 //! Embedding pipeline using Candle with Metal acceleration
 //!
 //! Uses bge-base-en-v1.5 (or all-MiniLM-L6-v2) for text embeddings.
+//! Supports both local (CPU/GPU) and remote (HTTP service) embedding generation.
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use hf_hub::{api::sync::Api, Repo, RepoType};
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
 use tracing::{debug, info, warn};
 
+use crate::config::EmbeddingFallback;
 use crate::error::{Error, Result};
 use crate::EMBEDDING_DIMENSION;
 
@@ -369,5 +373,228 @@ impl EmbeddingEngine {
                 }
             }
         }
+    }
+}
+
+// ============================================================================
+// Remote Embedding Client
+// ============================================================================
+
+/// Request body for the remote /embed endpoint
+#[derive(Debug, Serialize)]
+struct RemoteEmbedRequest {
+    texts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+}
+
+/// Response body from the remote /embed endpoint
+#[derive(Debug, Deserialize)]
+struct RemoteEmbedResponse {
+    embeddings: Vec<Vec<f32>>,
+    model: String,
+    dimension: usize,
+    count: usize,
+}
+
+/// Client for remote embedding service (dawn-embeddings)
+pub struct RemoteEmbeddingClient {
+    client: reqwest::blocking::Client,
+    url: String,
+    timeout: Duration,
+}
+
+impl RemoteEmbeddingClient {
+    /// Create a new remote embedding client
+    pub fn new(url: String, timeout_ms: u64) -> Result<Self> {
+        let timeout = Duration::from_millis(timeout_ms);
+        let client = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|e| Error::Embedding(format!("Failed to create HTTP client: {}", e)))?;
+
+        info!("Created remote embedding client for {}", url);
+        Ok(Self {
+            client,
+            url,
+            timeout,
+        })
+    }
+
+    /// Generate embeddings for a batch of texts using the remote service
+    pub fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        debug!(
+            "Requesting embeddings for {} texts from {}",
+            texts.len(),
+            self.url
+        );
+
+        let request = RemoteEmbedRequest {
+            texts: texts.to_vec(),
+            model: Some("bge-base-en-v1.5".to_string()),
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/embed", self.url))
+            .json(&request)
+            .send()
+            .map_err(|e| Error::Embedding(format!("Remote embedding request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(Error::Embedding(format!(
+                "Remote embedding service returned {}: {}",
+                status, body
+            )));
+        }
+
+        let result: RemoteEmbedResponse = response
+            .json()
+            .map_err(|e| Error::Embedding(format!("Failed to parse embedding response: {}", e)))?;
+
+        debug!(
+            "Received {} embeddings (dimension: {}) from remote service",
+            result.count, result.dimension
+        );
+
+        // Ensure embeddings match our expected dimension
+        let embeddings: Vec<Vec<f32>> = result
+            .embeddings
+            .into_iter()
+            .map(|mut e| {
+                // Pad or truncate to EMBEDDING_DIMENSION
+                while e.len() < EMBEDDING_DIMENSION {
+                    e.push(0.0);
+                }
+                e.truncate(EMBEDDING_DIMENSION);
+                e
+            })
+            .collect();
+
+        Ok(embeddings)
+    }
+
+    /// Generate embedding for a single text
+    pub fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        let embeddings = self.embed_batch(&[text.to_string()])?;
+        Ok(embeddings.into_iter().next().unwrap_or_default())
+    }
+
+    /// Check if the remote service is available
+    pub fn is_available(&self) -> bool {
+        match self.client.get(format!("{}/health", self.url)).send() {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
+        }
+    }
+}
+
+// ============================================================================
+// Hybrid Embedding Provider
+// ============================================================================
+
+/// Hybrid embedding provider that uses remote service with local fallback
+pub struct HybridEmbeddingProvider {
+    remote: Option<RemoteEmbeddingClient>,
+    local: Arc<EmbeddingEngine>,
+    fallback: EmbeddingFallback,
+}
+
+impl HybridEmbeddingProvider {
+    /// Create a new hybrid embedding provider
+    pub fn new(
+        local: Arc<EmbeddingEngine>,
+        remote_url: Option<String>,
+        timeout_ms: u64,
+        fallback: EmbeddingFallback,
+    ) -> Result<Self> {
+        let remote = if let Some(url) = remote_url {
+            match RemoteEmbeddingClient::new(url.clone(), timeout_ms) {
+                Ok(client) => {
+                    info!("Remote embedding service configured at {}", url);
+                    Some(client)
+                }
+                Err(e) => {
+                    warn!("Failed to create remote embedding client: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            remote,
+            local,
+            fallback,
+        })
+    }
+
+    /// Generate embeddings for a batch of texts
+    ///
+    /// If remote service is configured and available, uses remote.
+    /// Otherwise falls back based on configuration.
+    pub fn embed_batch(&self, texts: &[String]) -> Result<Option<Vec<Vec<f32>>>> {
+        if texts.is_empty() {
+            return Ok(Some(vec![]));
+        }
+
+        // Try remote first if configured
+        if let Some(ref remote) = self.remote {
+            match remote.embed_batch(texts) {
+                Ok(embeddings) => {
+                    debug!("Used remote embedding service for {} texts", texts.len());
+                    return Ok(Some(embeddings));
+                }
+                Err(e) => {
+                    warn!("Remote embedding failed: {}, using fallback", e);
+                }
+            }
+        }
+
+        // Handle fallback
+        match self.fallback {
+            EmbeddingFallback::Local => {
+                debug!("Falling back to local embedding for {} texts", texts.len());
+                let embeddings = self.local.embed_batch(texts)?;
+                Ok(Some(embeddings))
+            }
+            EmbeddingFallback::Bm25 => {
+                debug!("Falling back to BM25-only (no embeddings) for {} texts", texts.len());
+                Ok(None) // Signal to skip vector search
+            }
+            EmbeddingFallback::Error => {
+                Err(Error::Embedding(
+                    "Remote embedding service unavailable and fallback is 'error'".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Generate embedding for a single text
+    pub fn embed(&self, text: &str) -> Result<Option<Vec<f32>>> {
+        let result = self.embed_batch(&[text.to_string()])?;
+        Ok(result.map(|mut v| v.pop().unwrap_or_default()))
+    }
+
+    /// Check if remote service is available
+    pub fn is_remote_available(&self) -> bool {
+        self.remote.as_ref().map(|r| r.is_available()).unwrap_or(false)
+    }
+
+    /// Get the local embedding engine dimension
+    pub fn dimension(&self) -> usize {
+        self.local.dimension()
+    }
+
+    /// Get a reference to the local embedding engine
+    pub fn local_engine(&self) -> &Arc<EmbeddingEngine> {
+        &self.local
     }
 }

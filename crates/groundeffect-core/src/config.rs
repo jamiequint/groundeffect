@@ -187,6 +187,24 @@ impl Default for SyncConfig {
     }
 }
 
+/// Fallback behavior when remote embedding service is unavailable
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingFallback {
+    /// Fall back to BM25-only search (no vector search, fast, lower quality)
+    Bm25,
+    /// Fall back to local CPU embedding (preserves quality, slower)
+    Local,
+    /// Return an error if remote service is unavailable
+    Error,
+}
+
+impl Default for EmbeddingFallback {
+    fn default() -> Self {
+        Self::Bm25
+    }
+}
+
 /// Search settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
@@ -215,6 +233,19 @@ pub struct SearchConfig {
     /// Below this threshold, use local embedding
     #[serde(default = "default_embedding_gpu_threshold")]
     pub embedding_gpu_threshold: usize,
+
+    /// URL of remote embedding service (e.g., "http://dawn-embeddings.internal:8000")
+    /// If set, embeddings will be requested from this service instead of generated locally.
+    #[serde(default)]
+    pub embedding_url: Option<String>,
+
+    /// What to do when remote embedding service is unavailable
+    #[serde(default)]
+    pub embedding_fallback: EmbeddingFallback,
+
+    /// Timeout for remote embedding requests in milliseconds
+    #[serde(default = "default_embedding_timeout_ms")]
+    pub embedding_timeout_ms: u64,
 }
 
 impl Default for SearchConfig {
@@ -226,6 +257,9 @@ impl Default for SearchConfig {
             vector_weight: 0.5,
             embedding_batch_size: default_embedding_batch_size(),
             embedding_gpu_threshold: default_embedding_gpu_threshold(),
+            embedding_url: None,
+            embedding_fallback: EmbeddingFallback::default(),
+            embedding_timeout_ms: default_embedding_timeout_ms(),
         }
     }
 }
@@ -346,6 +380,10 @@ fn default_embedding_batch_size() -> usize {
 
 fn default_embedding_gpu_threshold() -> usize {
     10  // Route most bulk work to GPU service
+}
+
+fn default_embedding_timeout_ms() -> u64 {
+    30000  // 30 seconds - embedding can be slow on first request (model loading)
 }
 
 fn default_recent_items() -> usize {

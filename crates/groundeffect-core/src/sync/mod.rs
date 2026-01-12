@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::db::Database;
-use crate::embedding::EmbeddingEngine;
+use crate::embedding::HybridEmbeddingProvider;
 use crate::error::{Error, Result};
 use crate::models::{Account, AccountStatus, CalendarEvent, Email};
 use crate::oauth::OAuthManager;
@@ -135,7 +135,7 @@ pub struct SyncManager {
     db: Arc<Database>,
     config: Arc<Config>,
     oauth: Arc<OAuthManager>,
-    embedding: Arc<EmbeddingEngine>,
+    embedding: Arc<HybridEmbeddingProvider>,
     rate_limiter: Arc<GlobalRateLimiter>,
     account_states: Arc<RwLock<HashMap<String, AccountSyncState>>>,
     event_tx: mpsc::Sender<SyncEvent>,
@@ -148,7 +148,7 @@ impl SyncManager {
         db: Arc<Database>,
         config: Arc<Config>,
         oauth: Arc<OAuthManager>,
-        embedding: Arc<EmbeddingEngine>,
+        embedding: Arc<HybridEmbeddingProvider>,
     ) -> Self {
         let (tx, rx) = mpsc::channel(1000);
         let rate_limit = config.sync.rate_limit_per_second;
@@ -408,43 +408,36 @@ impl SyncManager {
                     for embed_chunk in new_emails.chunks(embed_batch_size) {
                         let texts: Vec<String> = embed_chunk.iter().map(|e| e.searchable_text()).collect();
 
-                        // Retry embedding with exponential backoff
-                        let mut embeddings_result = None;
-                        let mut last_error = None;
-                        for attempt in 1..=MAX_EMBED_RETRIES {
-                            match embedding.embed_batch(&texts) {
-                                Ok(emb) => {
-                                    embeddings_result = Some(emb);
-                                    break;
-                                }
-                                Err(e) => {
-                                    warn!("Embedding attempt {}/{} failed: {}", attempt, MAX_EMBED_RETRIES, e);
-                                    last_error = Some(e);
-                                    if attempt < MAX_EMBED_RETRIES {
-                                        let delay = 1000 * (1 << (attempt - 1)); // 1s, 2s, 4s
-                                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                                    }
-                                }
-                            }
-                        }
-
-                        let embeddings = match embeddings_result {
-                            Some(emb) => emb,
-                            None => {
-                                error!("Failed to embed batch after {} retries, skipping {} emails", MAX_EMBED_RETRIES, embed_chunk.len());
-                                continue; // Skip this chunk but continue with others
+                        // Try to get embeddings (may return None if fallback is BM25-only)
+                        let embeddings_opt = match embedding.embed_batch(&texts) {
+                            Ok(opt) => opt,
+                            Err(e) => {
+                                warn!("Embedding failed: {}, storing emails without embeddings", e);
+                                None
                             }
                         };
 
-                        let emails_with_embeddings: Vec<Email> = embed_chunk
-                            .iter()
-                            .zip(embeddings.into_iter())
-                            .map(|(email, embedding)| {
-                                let mut email = email.clone();
-                                email.embedding = Some(embedding);
-                                email
-                            })
-                            .collect();
+                        // Create emails with or without embeddings depending on result
+                        let emails_to_store: Vec<Email> = match embeddings_opt {
+                            Some(embeddings) => {
+                                embed_chunk
+                                    .iter()
+                                    .zip(embeddings.into_iter())
+                                    .map(|(email, emb)| {
+                                        let mut email = email.clone();
+                                        email.embedding = Some(emb);
+                                        email
+                                    })
+                                    .collect()
+                            }
+                            None => {
+                                // Store without embeddings (BM25-only fallback)
+                                debug!("Storing {} emails without embeddings (BM25-only mode)", embed_chunk.len());
+                                embed_chunk.to_vec()
+                            }
+                        };
+
+                        let emails_with_embeddings = emails_to_store;
 
                         // Retry database upsert with exponential backoff
                         let mut db_success = false;
@@ -667,19 +660,33 @@ impl SyncManager {
                 // Collect texts for batch embedding
                 let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
 
-                // Generate embeddings for entire batch at once
-                let embeddings = self.embedding.embed_batch(&texts)?;
+                // Try to get embeddings (may return None if fallback is BM25-only)
+                let embeddings_opt = match self.embedding.embed_batch(&texts) {
+                    Ok(opt) => opt,
+                    Err(e) => {
+                        warn!("Calendar embedding failed: {}, storing events without embeddings", e);
+                        None
+                    }
+                };
 
-                // Attach embeddings to events
-                let events_with_embeddings: Vec<CalendarEvent> = chunk
-                    .iter()
-                    .zip(embeddings.into_iter())
-                    .map(|(event, embedding)| {
-                        let mut event = event.clone();
-                        event.embedding = Some(embedding);
-                        event
-                    })
-                    .collect();
+                // Create events with or without embeddings
+                let events_with_embeddings: Vec<CalendarEvent> = match embeddings_opt {
+                    Some(embeddings) => {
+                        chunk
+                            .iter()
+                            .zip(embeddings.into_iter())
+                            .map(|(event, emb)| {
+                                let mut event = event.clone();
+                                event.embedding = Some(emb);
+                                event
+                            })
+                            .collect()
+                    }
+                    None => {
+                        debug!("Storing {} events without embeddings (BM25-only mode)", chunk.len());
+                        chunk.to_vec()
+                    }
+                };
 
                 // Batch insert all events at once
                 self.db.upsert_events(&events_with_embeddings).await?;
@@ -848,19 +855,33 @@ impl SyncManager {
                         let embed_batch_size = self.config.search.embedding_batch_size;
                         for chunk in emails.chunks(embed_batch_size) {
                             let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
-                            let embeddings = self.embedding.embed_batch(&texts)?;
 
-                            let emails_with_embeddings: Vec<Email> = chunk
-                                .iter()
-                                .zip(embeddings.into_iter())
-                                .map(|(email, embedding)| {
-                                    let mut email = email.clone();
-                                    email.embedding = Some(embedding);
-                                    email
-                                })
-                                .collect();
+                            // Try to get embeddings (may return None if fallback is BM25-only)
+                            let embeddings_opt = match self.embedding.embed_batch(&texts) {
+                                Ok(opt) => opt,
+                                Err(e) => {
+                                    warn!("Email embedding failed: {}, storing emails without embeddings", e);
+                                    None
+                                }
+                            };
 
-                            self.db.upsert_emails(&emails_with_embeddings).await?;
+                            let emails_to_store: Vec<Email> = if let Some(embeddings) = embeddings_opt {
+                                // Got embeddings - attach them to emails
+                                chunk
+                                    .iter()
+                                    .zip(embeddings.into_iter())
+                                    .map(|(email, embedding)| {
+                                        let mut email = email.clone();
+                                        email.embedding = Some(embedding);
+                                        email
+                                    })
+                                    .collect()
+                            } else {
+                                // No embeddings (BM25-only) - store without embeddings
+                                chunk.to_vec()
+                            };
+
+                            self.db.upsert_emails(&emails_to_store).await?;
                         }
                         info!("Incremental sync: stored {} emails for {}", emails.len(), account_id);
                     }

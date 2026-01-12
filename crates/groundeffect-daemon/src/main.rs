@@ -21,7 +21,7 @@ use tracing_subscriber::Layer;
 
 use groundeffect_core::config::Config;
 use groundeffect_core::db::Database;
-use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel};
+use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel, HybridEmbeddingProvider};
 use groundeffect_core::mcp::McpServer;
 use groundeffect_core::models::{Account, AccountStatus};
 use groundeffect_core::oauth::OAuthManager;
@@ -442,17 +442,23 @@ async fn run_daemon() -> Result<()> {
         info!("No accounts configured yet. Add accounts via 'groundeffect account add'.");
     }
 
-    // Initialize embedding engine
+    // Initialize embedding engine with hybrid remote/local support
     info!("Loading embedding model...");
     let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
         .unwrap_or(EmbeddingModel::BgeBaseEn); // MiniLM works with Candle's BertConfig
-    let embedding = Arc::new(
+    let local_embedding = Arc::new(
         EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)
             .map_err(|e| {
                 error!("Failed to load embedding model: {}", e);
                 e
             })?,
     );
+    let embedding = Arc::new(HybridEmbeddingProvider::new(
+        local_embedding,
+        config.search.embedding_url.clone(),
+        config.search.embedding_timeout_ms,
+        config.search.embedding_fallback,
+    )?);
 
     // Initialize token provider and OAuth manager
     let token_provider = create_token_provider(&config).await?;
@@ -714,13 +720,19 @@ async fn run_mcp_server() -> Result<()> {
     // Initialize database
     let db = Arc::new(Database::open(config.lancedb_dir()).await?);
 
-    // Initialize embedding engine
+    // Initialize embedding engine with hybrid remote/local support
     let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
         .unwrap_or(EmbeddingModel::BgeBaseEn);
-    let embedding = Arc::new(EmbeddingEngine::from_cache(
+    let local_embedding = Arc::new(EmbeddingEngine::from_cache(
         config.models_dir(),
         model_type,
         config.search.use_gpu,
+    )?);
+    let embedding = Arc::new(HybridEmbeddingProvider::new(
+        local_embedding,
+        config.search.embedding_url.clone(),
+        config.search.embedding_timeout_ms,
+        config.search.embedding_fallback,
     )?);
 
     // Initialize token provider and OAuth manager
@@ -728,7 +740,7 @@ async fn run_mcp_server() -> Result<()> {
     let oauth = Arc::new(OAuthManager::new(token_provider));
 
     // Create and run MCP server
-    let mcp = McpServer::new(db, config, embedding, oauth);
+    let mcp = McpServer::new(db, config.clone(), embedding, oauth);
     mcp.run().await.map_err(|e| anyhow::anyhow!(e))
 }
 

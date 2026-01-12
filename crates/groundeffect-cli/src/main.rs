@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use groundeffect_core::config::{Config, DaemonConfig};
 use groundeffect_core::db::Database;
-use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel};
+use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel, HybridEmbeddingProvider};
 use groundeffect_core::models::{Account, AccountStatus, CalendarEvent, Email, EventTime};
 use groundeffect_core::oauth::OAuthManager;
 use groundeffect_core::search::{CalendarSearchOptions, SearchEngine, SearchOptions};
@@ -1400,12 +1400,18 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
             let config = Config::load().unwrap_or_default();
             let db = Arc::new(Database::open(config.lancedb_dir()).await?);
 
-            // Initialize embedding engine for vector search
+            // Initialize embedding engine with hybrid remote/local support
             let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
                 .unwrap_or(EmbeddingModel::BgeBaseEn);
-            let embedding = Arc::new(
+            let local_embedding = Arc::new(
                 EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
             );
+            let embedding = Arc::new(HybridEmbeddingProvider::new(
+                local_embedding,
+                config.search.embedding_url.clone(),
+                config.search.embedding_timeout_ms,
+                config.search.embedding_fallback,
+            )?);
 
             let search_engine = SearchEngine::new(db.clone(), embedding);
 
@@ -1639,12 +1645,18 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
             let config = Config::load().unwrap_or_default();
             let db = Arc::new(Database::open(config.lancedb_dir()).await?);
 
-            // Initialize embedding engine
+            // Initialize embedding engine with hybrid remote/local support
             let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
                 .unwrap_or(EmbeddingModel::BgeBaseEn);
-            let embedding = Arc::new(
+            let local_embedding = Arc::new(
                 EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
             );
+            let embedding = Arc::new(HybridEmbeddingProvider::new(
+                local_embedding,
+                config.search.embedding_url.clone(),
+                config.search.embedding_timeout_ms,
+                config.search.embedding_fallback,
+            )?);
 
             let search_engine = SearchEngine::new(db.clone(), embedding);
 

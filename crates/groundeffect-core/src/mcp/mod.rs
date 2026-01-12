@@ -19,7 +19,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::db::Database;
-use crate::embedding::EmbeddingEngine;
+use crate::embedding::HybridEmbeddingProvider;
 use crate::error::{Error, Result};
 use crate::oauth::OAuthManager;
 use crate::search::SearchEngine;
@@ -37,7 +37,7 @@ impl McpServer {
     pub fn new(
         db: Arc<Database>,
         config: Arc<Config>,
-        embedding: Arc<EmbeddingEngine>,
+        embedding: Arc<HybridEmbeddingProvider>,
         oauth: Arc<OAuthManager>,
     ) -> Self {
         let search = Arc::new(SearchEngine::new(db.clone(), embedding));

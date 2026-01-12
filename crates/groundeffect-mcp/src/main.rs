@@ -15,7 +15,7 @@ use tracing_subscriber::Layer;
 
 use groundeffect_core::config::Config;
 use groundeffect_core::db::Database;
-use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel};
+use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel, HybridEmbeddingProvider};
 use groundeffect_core::mcp::McpServer;
 use groundeffect_core::oauth::OAuthManager;
 use groundeffect_core::token_provider::create_token_provider;
@@ -70,23 +70,29 @@ async fn main() -> Result<()> {
     // Note: LanceDB supports concurrent readers, so this is safe
     let db = Arc::new(Database::open(&db_path).await?);
 
-    // Initialize embedding engine for search queries
+    // Initialize embedding engine with hybrid remote/local support
     let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
         .unwrap_or(EmbeddingModel::BgeBaseEn);
-    let embedding = Arc::new(
+    let local_embedding = Arc::new(
         EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)
             .map_err(|e| {
                 error!("Failed to load embedding model: {}", e);
                 e
             })?,
     );
+    let embedding = Arc::new(HybridEmbeddingProvider::new(
+        local_embedding,
+        config.search.embedding_url.clone(),
+        config.search.embedding_timeout_ms,
+        config.search.embedding_fallback,
+    )?);
 
     // Initialize token provider and OAuth manager (for mutations that go directly to IMAP/CalDAV)
     let token_provider = create_token_provider(&config).await?;
     let oauth = Arc::new(OAuthManager::new(token_provider));
 
     // Create and run MCP server
-    let server = McpServer::new(db, config, embedding, oauth);
+    let server = McpServer::new(db, config.clone(), embedding, oauth);
 
     info!("Starting MCP server on stdio");
     server.run().await?;

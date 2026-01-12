@@ -13,7 +13,7 @@ use lancedb::Table;
 use tracing::{debug, info};
 
 use crate::db::Database;
-use crate::embedding::EmbeddingEngine;
+use crate::embedding::HybridEmbeddingProvider;
 use crate::error::Result;
 use crate::models::{CalendarEvent, EmailSearchResult, EmailSummary};
 
@@ -125,15 +125,15 @@ impl SearchOptions {
 /// Hybrid search engine
 pub struct SearchEngine {
     db: Arc<Database>,
-    embedding_engine: Arc<EmbeddingEngine>,
+    embedding: Arc<HybridEmbeddingProvider>,
 }
 
 impl SearchEngine {
     /// Create a new search engine
-    pub fn new(db: Arc<Database>, embedding_engine: Arc<EmbeddingEngine>) -> Self {
+    pub fn new(db: Arc<Database>, embedding: Arc<HybridEmbeddingProvider>) -> Self {
         Self {
             db,
-            embedding_engine,
+            embedding,
         }
     }
 
@@ -264,9 +264,15 @@ impl SearchEngine {
 
         let start = std::time::Instant::now();
 
-        // Generate query embedding
+        // Generate query embedding (may return None if fallback is BM25-only)
         let embed_start = std::time::Instant::now();
-        let query_embedding = self.embedding_engine.embed(query)?;
+        let query_embedding = match self.embedding.embed(query)? {
+            Some(emb) => emb,
+            None => {
+                info!("No embedding available, skipping vector search (BM25-only)");
+                return Ok(Vec::new());
+            }
+        };
         info!("Query embedding took {:?}", embed_start.elapsed());
 
         let mut search = table.vector_search(query_embedding)?;
@@ -451,7 +457,13 @@ impl SearchEngine {
     ) -> Result<Vec<(String, f32)>> {
         use futures::TryStreamExt;
 
-        let query_embedding = self.embedding_engine.embed(query)?;
+        let query_embedding = match self.embedding.embed(query)? {
+            Some(emb) => emb,
+            None => {
+                info!("No embedding available, skipping vector search (BM25-only)");
+                return Ok(Vec::new());
+            }
+        };
 
         let mut search = table.vector_search(query_embedding)?;
 

@@ -38,7 +38,7 @@ async-imap = "0.10"
 async-native-tls = "0.5"
 
 # CalDAV / HTTP
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking"] }
 icalendar = "0.16"
 
 # MCP / JSON-RPC
