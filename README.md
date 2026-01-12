@@ -12,6 +12,7 @@ GroundEffect is a local headless IMAP/CalDav client, Claude Code skill, and MCP 
 - **MCP Integration**: Exposes email and calendar tools directly to Claude Code
 - **Real-time Sync**: IMAP IDLE for instant email notifications, CalDAV polling for calendar
 - **HTML Text Extraction**: Automatically converts HTML emails to clean plain text using `html2text`
+- **Pluggable Token Storage**: File-based (default) or PostgreSQL with AES-256-GCM encryption
 
 ## Quick Start
 
@@ -262,7 +263,9 @@ groundeffect config add-permissions
 
 ```
 ~/.config/groundeffect/
+├── config.toml            # Main configuration
 ├── daemon.toml            # Daemon configuration
+└── tokens/                # OAuth tokens (file provider)
 
 ~/.local/share/groundeffect/
 ├── lancedb/               # LanceDB database
@@ -275,7 +278,45 @@ groundeffect config add-permissions
 ~/.claude/skills/groundeffect/   # Claude Code skill
 ```
 
-OAuth tokens are stored securely in the macOS Keychain.
+### Token Storage
+
+By default, OAuth tokens are stored in `~/.config/groundeffect/tokens/` as encrypted JSON files.
+
+For server deployments or ephemeral containers, you can store tokens in PostgreSQL instead. This requires the `postgres` feature.
+
+#### PostgreSQL Token Storage
+
+1. Build with the postgres feature:
+   ```bash
+   cargo build --release --features postgres
+   ```
+
+2. Create the tokens table:
+   ```sql
+   CREATE TABLE IF NOT EXISTS groundeffect_tokens (
+       email VARCHAR(255) PRIMARY KEY,
+       encrypted_tokens BYTEA NOT NULL,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   );
+   ```
+
+3. Configure in `~/.config/groundeffect/config.toml`:
+   ```toml
+   [tokens]
+   provider = "postgres"
+   database_url_env = "DATABASE_URL"
+   encryption_key_env = "GE_TOKEN_ENCRYPTION_KEY"
+   # table_name = "groundeffect_tokens"  # optional
+   ```
+
+4. Set environment variables:
+   ```bash
+   export DATABASE_URL="postgres://user:pass@localhost/mydb"
+   export GE_TOKEN_ENCRYPTION_KEY="your-secret-key-here"
+   ```
+
+Tokens are encrypted at rest using AES-256-GCM with a key derived from your encryption key via HKDF-SHA256.
 
 ## Troubleshooting
 

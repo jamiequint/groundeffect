@@ -28,6 +28,10 @@ pub struct Config {
     /// Account aliases
     #[serde(default)]
     pub accounts: AccountsConfig,
+
+    /// Token storage provider configuration
+    #[serde(default)]
+    pub tokens: TokenProviderConfig,
 }
 
 impl Default for Config {
@@ -38,7 +42,60 @@ impl Default for Config {
             search: SearchConfig::default(),
             ui: UiConfig::default(),
             accounts: AccountsConfig::default(),
+            tokens: TokenProviderConfig::default(),
         }
+    }
+}
+
+/// Token storage provider configuration
+///
+/// Controls where OAuth tokens are stored. Default is file-based storage.
+///
+/// # Examples
+///
+/// File-based (default):
+/// ```toml
+/// [tokens]
+/// provider = "file"
+/// ```
+///
+/// PostgreSQL (requires "postgres" feature):
+/// ```toml
+/// [tokens]
+/// provider = "postgres"
+/// database_url_env = "DATABASE_URL"
+/// encryption_key_env = "GE_TOKEN_ENCRYPTION_KEY"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "provider", rename_all = "snake_case")]
+pub enum TokenProviderConfig {
+    /// File-based token storage (default)
+    /// Stores tokens in ~/.config/groundeffect/tokens/<account>.json
+    File,
+
+    /// PostgreSQL-based token storage
+    /// Requires the "postgres" feature to be enabled
+    Postgres {
+        /// Direct database URL (optional if database_url_env is set)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        database_url: Option<String>,
+
+        /// Environment variable containing the database URL
+        #[serde(skip_serializing_if = "Option::is_none")]
+        database_url_env: Option<String>,
+
+        /// Environment variable containing the encryption key (required)
+        encryption_key_env: String,
+
+        /// Custom table name (default: "groundeffect_tokens")
+        #[serde(skip_serializing_if = "Option::is_none")]
+        table_name: Option<String>,
+    },
+}
+
+impl Default for TokenProviderConfig {
+    fn default() -> Self {
+        Self::File
     }
 }
 

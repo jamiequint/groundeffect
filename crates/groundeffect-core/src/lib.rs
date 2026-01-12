@@ -13,10 +13,12 @@ pub mod models;
 pub mod oauth;
 pub mod search;
 pub mod sync;
+pub mod token_provider;
 
 pub use config::Config;
 pub use error::{Error, Result};
 pub use models::*;
+pub use token_provider::{TokenProvider, create_token_provider};
 
 /// Vector dimension for embeddings (768 for bge-base-en-v1.5)
 pub const EMBEDDING_DIMENSION: usize = 768;
