@@ -90,6 +90,16 @@ pub enum TokenProviderConfig {
         /// Custom table name (default: "groundeffect_tokens")
         #[serde(skip_serializing_if = "Option::is_none")]
         table_name: Option<String>,
+
+        /// Static user_id for multi-tenant deployments (optional)
+        /// When set, queries filter by user_id column for tenant isolation
+        #[serde(skip_serializing_if = "Option::is_none")]
+        user_id: Option<String>,
+
+        /// Environment variable containing the user_id (optional)
+        /// Alternative to setting user_id directly in config
+        #[serde(skip_serializing_if = "Option::is_none")]
+        user_id_env: Option<String>,
     },
 }
 

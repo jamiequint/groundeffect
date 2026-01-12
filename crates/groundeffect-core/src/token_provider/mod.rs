@@ -89,6 +89,8 @@ pub async fn create_token_provider(config: &Config) -> Result<Arc<dyn TokenProvi
             database_url_env,
             encryption_key_env,
             table_name,
+            user_id,
+            user_id_env,
         } => {
             use crate::error::Error;
 
@@ -112,10 +114,20 @@ pub async fn create_token_provider(config: &Config) -> Result<Arc<dyn TokenProvi
                 ))
             })?;
 
+            // Resolve user_id from config or environment variable
+            let resolved_user_id = user_id
+                .clone()
+                .or_else(|| {
+                    user_id_env
+                        .as_ref()
+                        .and_then(|env| std::env::var(env).ok())
+                });
+
             let provider = PostgresTokenProvider::new(
                 &url,
                 &key,
                 table_name.as_deref(),
+                resolved_user_id.as_deref(),
             )
             .await?;
 

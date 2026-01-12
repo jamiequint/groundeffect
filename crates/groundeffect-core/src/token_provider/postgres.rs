@@ -11,12 +11,25 @@
 //!
 //! # Database Schema
 //!
+//! Single-tenant mode (default):
 //! ```sql
 //! CREATE TABLE IF NOT EXISTS groundeffect_tokens (
 //!     email VARCHAR(255) PRIMARY KEY,
 //!     encrypted_tokens BYTEA NOT NULL,
 //!     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 //!     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+//! );
+//! ```
+//!
+//! Multi-tenant mode (when user_id is configured):
+//! ```sql
+//! CREATE TABLE IF NOT EXISTS groundeffect_tokens (
+//!     user_id VARCHAR(255) NOT NULL,
+//!     email VARCHAR(255) NOT NULL,
+//!     encrypted_tokens BYTEA NOT NULL,
+//!     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+//!     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+//!     PRIMARY KEY (user_id, email)
 //! );
 //! ```
 
@@ -44,6 +57,9 @@ pub struct PostgresTokenProvider {
     pool: PgPool,
     cipher: Aes256Gcm,
     table_name: String,
+    /// Optional user_id for multi-tenant deployments
+    /// When set, all queries filter by this user_id
+    user_id: Option<String>,
 }
 
 impl PostgresTokenProvider {
@@ -54,20 +70,34 @@ impl PostgresTokenProvider {
     /// * `database_url` - PostgreSQL connection string
     /// * `encryption_key` - User-provided encryption key (will be derived via HKDF)
     /// * `table_name` - Optional custom table name (defaults to "groundeffect_tokens")
+    /// * `user_id` - Optional user_id for multi-tenant deployments
     ///
     /// # Example
     ///
+    /// Single-tenant mode:
     /// ```ignore
     /// let provider = PostgresTokenProvider::new(
     ///     "postgres://user:pass@localhost/db",
     ///     "my-secret-key",
     ///     Some("my_custom_table"),
+    ///     None,
+    /// ).await?;
+    /// ```
+    ///
+    /// Multi-tenant mode:
+    /// ```ignore
+    /// let provider = PostgresTokenProvider::new(
+    ///     "postgres://user:pass@localhost/db",
+    ///     "my-secret-key",
+    ///     Some("groundeffect_tokens"),
+    ///     Some("user_123"),
     /// ).await?;
     /// ```
     pub async fn new(
         database_url: &str,
         encryption_key: &str,
         table_name: Option<&str>,
+        user_id: Option<&str>,
     ) -> Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
@@ -86,15 +116,25 @@ impl PostgresTokenProvider {
             pool,
             cipher,
             table_name: table,
+            user_id: user_id.map(|s| s.to_string()),
         };
 
-        // Ensure table exists with the correct name
+        // Ensure table exists with the correct schema
+        // Note: For multi-tenant mode, the table must be created externally with
+        // the user_id column and composite primary key (user_id, email)
         provider.ensure_table().await?;
 
-        info!(
-            "PostgreSQL token provider initialized with table: {}",
-            provider.table_name
-        );
+        if let Some(ref uid) = provider.user_id {
+            info!(
+                "PostgreSQL token provider initialized with table: {}, user_id: {}",
+                provider.table_name, uid
+            );
+        } else {
+            info!(
+                "PostgreSQL token provider initialized with table: {}",
+                provider.table_name
+            );
+        }
         Ok(provider)
     }
 
@@ -177,16 +217,29 @@ impl PostgresTokenProvider {
 #[async_trait]
 impl TokenProvider for PostgresTokenProvider {
     async fn get_tokens(&self, account_id: &str) -> Result<Option<OAuthTokens>> {
-        let query = format!(
-            "SELECT encrypted_tokens FROM {} WHERE email = $1",
-            self.table_name
-        );
-
-        let row: Option<(Vec<u8>,)> = sqlx::query_as(&query)
-            .bind(account_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| Error::Token(format!("Database query failed: {}", e)))?;
+        let row: Option<(Vec<u8>,)> = if let Some(ref user_id) = self.user_id {
+            // Multi-tenant mode: filter by user_id
+            let query = format!(
+                "SELECT encrypted_tokens FROM {} WHERE user_id = $1 AND email = $2",
+                self.table_name
+            );
+            sqlx::query_as(&query)
+                .bind(user_id)
+                .bind(account_id)
+                .fetch_optional(&self.pool)
+                .await
+        } else {
+            // Single-tenant mode: email is primary key
+            let query = format!(
+                "SELECT encrypted_tokens FROM {} WHERE email = $1",
+                self.table_name
+            );
+            sqlx::query_as(&query)
+                .bind(account_id)
+                .fetch_optional(&self.pool)
+                .await
+        }
+        .map_err(|e| Error::Token(format!("Database query failed: {}", e)))?;
 
         match row {
             Some((encrypted,)) => {
@@ -204,48 +257,93 @@ impl TokenProvider for PostgresTokenProvider {
     async fn store_tokens(&self, account_id: &str, tokens: &OAuthTokens) -> Result<()> {
         let encrypted = self.encrypt(tokens)?;
 
-        let query = format!(
-            r#"
-            INSERT INTO {} (email, encrypted_tokens, created_at, updated_at)
-            VALUES ($1, $2, NOW(), NOW())
-            ON CONFLICT (email) DO UPDATE SET
-                encrypted_tokens = EXCLUDED.encrypted_tokens,
-                updated_at = NOW()
-            "#,
-            self.table_name
-        );
-
-        sqlx::query(&query)
-            .bind(account_id)
-            .bind(&encrypted)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Token(format!("Failed to store tokens: {}", e)))?;
+        if let Some(ref user_id) = self.user_id {
+            // Multi-tenant mode: include user_id in insert/update
+            let query = format!(
+                r#"
+                INSERT INTO {} (user_id, email, encrypted_tokens, created_at, updated_at)
+                VALUES ($1, $2, $3, NOW(), NOW())
+                ON CONFLICT (user_id, email) DO UPDATE SET
+                    encrypted_tokens = EXCLUDED.encrypted_tokens,
+                    updated_at = NOW()
+                "#,
+                self.table_name
+            );
+            sqlx::query(&query)
+                .bind(user_id)
+                .bind(account_id)
+                .bind(&encrypted)
+                .execute(&self.pool)
+                .await
+        } else {
+            // Single-tenant mode
+            let query = format!(
+                r#"
+                INSERT INTO {} (email, encrypted_tokens, created_at, updated_at)
+                VALUES ($1, $2, NOW(), NOW())
+                ON CONFLICT (email) DO UPDATE SET
+                    encrypted_tokens = EXCLUDED.encrypted_tokens,
+                    updated_at = NOW()
+                "#,
+                self.table_name
+            );
+            sqlx::query(&query)
+                .bind(account_id)
+                .bind(&encrypted)
+                .execute(&self.pool)
+                .await
+        }
+        .map_err(|e| Error::Token(format!("Failed to store tokens: {}", e)))?;
 
         debug!("Stored tokens for {} in PostgreSQL", account_id);
         Ok(())
     }
 
     async fn delete_tokens(&self, account_id: &str) -> Result<()> {
-        let query = format!("DELETE FROM {} WHERE email = $1", self.table_name);
-
-        sqlx::query(&query)
-            .bind(account_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Token(format!("Failed to delete tokens: {}", e)))?;
+        if let Some(ref user_id) = self.user_id {
+            // Multi-tenant mode: filter by user_id
+            let query = format!(
+                "DELETE FROM {} WHERE user_id = $1 AND email = $2",
+                self.table_name
+            );
+            sqlx::query(&query)
+                .bind(user_id)
+                .bind(account_id)
+                .execute(&self.pool)
+                .await
+        } else {
+            // Single-tenant mode
+            let query = format!("DELETE FROM {} WHERE email = $1", self.table_name);
+            sqlx::query(&query)
+                .bind(account_id)
+                .execute(&self.pool)
+                .await
+        }
+        .map_err(|e| Error::Token(format!("Failed to delete tokens: {}", e)))?;
 
         info!("Deleted tokens for {} from PostgreSQL", account_id);
         Ok(())
     }
 
     async fn list_accounts(&self) -> Result<Vec<String>> {
-        let query = format!("SELECT email FROM {}", self.table_name);
-
-        let rows: Vec<(String,)> = sqlx::query_as(&query)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| Error::Token(format!("Failed to list accounts: {}", e)))?;
+        let rows: Vec<(String,)> = if let Some(ref user_id) = self.user_id {
+            // Multi-tenant mode: filter by user_id
+            let query = format!(
+                "SELECT email FROM {} WHERE user_id = $1",
+                self.table_name
+            );
+            sqlx::query_as(&query)
+                .bind(user_id)
+                .fetch_all(&self.pool)
+                .await
+        } else {
+            // Single-tenant mode
+            let query = format!("SELECT email FROM {}", self.table_name);
+            sqlx::query_as(&query)
+                .fetch_all(&self.pool)
+                .await
+        }
+        .map_err(|e| Error::Token(format!("Failed to list accounts: {}", e)))?;
 
         let accounts: Vec<String> = rows.into_iter().map(|(email,)| email).collect();
         debug!("Found {} accounts in PostgreSQL", accounts.len());
