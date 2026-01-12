@@ -18,6 +18,7 @@ use groundeffect_core::db::Database;
 use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel};
 use groundeffect_core::mcp::McpServer;
 use groundeffect_core::oauth::OAuthManager;
+use groundeffect_core::token_provider::create_token_provider;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -80,8 +81,9 @@ async fn main() -> Result<()> {
             })?,
     );
 
-    // Initialize OAuth manager (for mutations that go directly to IMAP/CalDAV)
-    let oauth = Arc::new(OAuthManager::new());
+    // Initialize token provider and OAuth manager (for mutations that go directly to IMAP/CalDAV)
+    let token_provider = create_token_provider(&config).await?;
+    let oauth = Arc::new(OAuthManager::new(token_provider));
 
     // Create and run MCP server
     let server = McpServer::new(db, config, embedding, oauth);

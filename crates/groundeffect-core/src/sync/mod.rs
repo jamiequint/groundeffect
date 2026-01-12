@@ -22,7 +22,6 @@ use crate::config::Config;
 use crate::db::Database;
 use crate::embedding::EmbeddingEngine;
 use crate::error::{Error, Result};
-use crate::keychain::KeychainManager;
 use crate::models::{Account, AccountStatus, CalendarEvent, Email};
 use crate::oauth::OAuthManager;
 
@@ -186,7 +185,9 @@ impl SyncManager {
         info!("Initializing sync for account {}", account.id);
 
         // Check if we have valid tokens
-        let tokens = KeychainManager::get_tokens(&account.id)?
+        let tokens = self.oauth.token_provider()
+            .get_tokens(&account.id)
+            .await?
             .ok_or_else(|| Error::TokenExpired { account: account.id.clone() })?;
 
         if tokens.is_expired() {

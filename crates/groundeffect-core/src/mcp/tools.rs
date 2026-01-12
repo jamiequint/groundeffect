@@ -13,7 +13,6 @@ use tracing::{debug, info, warn};
 use crate::config::{Config, DaemonConfig};
 use crate::db::Database;
 use crate::error::{Error, Result};
-use crate::keychain::KeychainManager;
 use crate::models::{Account, AccountStatus, SendEmailRequest};
 use crate::oauth::OAuthManager;
 use crate::search::{CalendarSearchOptions, SearchEngine, SearchOptions};
@@ -1027,7 +1026,7 @@ impl ToolHandler {
         self.db.delete_account(&email).await?;
 
         // Delete tokens
-        if let Err(e) = KeychainManager::delete_tokens(&email) {
+        if let Err(e) = self.oauth.token_provider().delete_tokens(&email).await {
             warn!("Failed to delete tokens for {}: {}", email, e);
         }
 
@@ -1252,8 +1251,8 @@ impl ToolHandler {
         // Exchange code for tokens
         let (tokens, user_info) = self.oauth.exchange_code(&code).await?;
 
-        // Store tokens in keychain
-        KeychainManager::store_tokens(&user_info.email, &tokens)?;
+        // Store tokens
+        self.oauth.token_provider().store_tokens(&user_info.email, &tokens).await?;
 
         // Calculate sync_email_since based on years_to_sync
         use chrono::Duration;

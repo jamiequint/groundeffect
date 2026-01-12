@@ -13,10 +13,10 @@ use serde::Serialize;
 use groundeffect_core::config::{Config, DaemonConfig};
 use groundeffect_core::db::Database;
 use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel};
-use groundeffect_core::keychain::KeychainManager;
 use groundeffect_core::models::{Account, AccountStatus, CalendarEvent, Email, EventTime};
 use groundeffect_core::oauth::OAuthManager;
 use groundeffect_core::search::{CalendarSearchOptions, SearchEngine, SearchOptions};
+use groundeffect_core::token_provider::create_token_provider;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
@@ -2748,6 +2748,10 @@ async fn account_add(years: Option<String>, attachments: bool, alias: Option<Str
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
+    // Load config and initialize token provider early
+    let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
+
     // Check for OAuth credentials
     let client_id = std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_ID");
     let client_secret = std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_SECRET");
@@ -2831,7 +2835,7 @@ async fn account_add(years: Option<String>, attachments: bool, alias: Option<Str
         println!("\n🔐 Opening browser for Google authentication...\n");
     }
 
-    let oauth = OAuthManager::new();
+    let oauth = OAuthManager::new(token_provider.clone());
     let state = format!("groundeffect_{}", uuid::Uuid::new_v4());
     let auth_url = oauth.authorization_url(&state);
 
@@ -2908,11 +2912,10 @@ async fn account_add(years: Option<String>, attachments: bool, alias: Option<Str
     // Exchange code for tokens
     let (tokens, user_info) = oauth.exchange_code(&code).await?;
 
-    // Store tokens in keychain
-    KeychainManager::store_tokens(&user_info.email, &tokens)?;
+    // Store tokens
+    token_provider.store_tokens(&user_info.email, &tokens).await?;
 
     // Open database and create/update account
-    let config = Config::load().unwrap_or_default();
     std::fs::create_dir_all(config.lancedb_dir())?;
     let db = Database::open(config.lancedb_dir()).await?;
 
@@ -3013,6 +3016,7 @@ async fn account_delete(account: &str, confirm: bool, human: bool) -> Result<()>
     }
 
     let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
@@ -3030,7 +3034,7 @@ async fn account_delete(account: &str, confirm: bool, human: bool) -> Result<()>
             db.delete_account(&email).await?;
 
             // Delete tokens
-            if let Err(e) = KeychainManager::delete_tokens(&email) {
+            if let Err(e) = token_provider.delete_tokens(&email).await {
                 if human {
                     println!("Warning: Failed to delete tokens: {}", e);
                 }
@@ -3316,6 +3320,7 @@ async fn email_send(
     human: bool,
 ) -> Result<()> {
     let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
@@ -3409,7 +3414,7 @@ async fn email_send(
     let encoded = URL_SAFE_NO_PAD.encode(message.as_bytes());
 
     // Get access token
-    let oauth = OAuthManager::new();
+    let oauth = OAuthManager::new(token_provider);
     let access_token = oauth.get_valid_token(from_email).await?;
     let client = reqwest::Client::new();
 
@@ -3672,6 +3677,7 @@ async fn calendar_create(
     human: bool,
 ) -> Result<()> {
     let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
@@ -3712,7 +3718,7 @@ async fn calendar_create(
     }
 
     // Get access token
-    let oauth = OAuthManager::new();
+    let oauth = OAuthManager::new(token_provider);
     let access_token = oauth.get_valid_token(&account_email).await?;
 
     // Create event via Google Calendar API
@@ -4267,6 +4273,7 @@ async fn draft_create(
     human: bool,
 ) -> Result<()> {
     let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
@@ -4304,7 +4311,7 @@ async fn draft_create(
 
     let encoded = URL_SAFE_NO_PAD.encode(message.as_bytes());
 
-    let oauth = OAuthManager::new();
+    let oauth = OAuthManager::new(token_provider);
     let access_token = oauth.get_valid_token(from_email).await?;
     let client = reqwest::Client::new();
 
@@ -4350,6 +4357,7 @@ async fn draft_create(
 
 async fn draft_list(from: &str, limit: usize, human: bool) -> Result<()> {
     let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
@@ -4359,7 +4367,7 @@ async fn draft_list(from: &str, limit: usize, human: bool) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Account not found: {}", from))?;
     let from_email = &account.id;
 
-    let oauth = OAuthManager::new();
+    let oauth = OAuthManager::new(token_provider);
     let access_token = oauth.get_valid_token(from_email).await?;
     let client = reqwest::Client::new();
 
@@ -4445,6 +4453,7 @@ async fn draft_list(from: &str, limit: usize, human: bool) -> Result<()> {
 
 async fn draft_show(from: &str, draft_id: &str, human: bool) -> Result<()> {
     let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
@@ -4454,7 +4463,7 @@ async fn draft_show(from: &str, draft_id: &str, human: bool) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Account not found: {}", from))?;
     let from_email = &account.id;
 
-    let oauth = OAuthManager::new();
+    let oauth = OAuthManager::new(token_provider);
     let access_token = oauth.get_valid_token(from_email).await?;
     let client = reqwest::Client::new();
 
@@ -4553,6 +4562,7 @@ async fn draft_update(
     force_html: bool, human: bool,
 ) -> Result<()> {
     let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
@@ -4563,7 +4573,7 @@ async fn draft_update(
     let from_email = &account.id;
     let display_name = &account.display_name;
 
-    let oauth = OAuthManager::new();
+    let oauth = OAuthManager::new(token_provider);
     let access_token = oauth.get_valid_token(from_email).await?;
     let client = reqwest::Client::new();
 
@@ -4681,6 +4691,7 @@ async fn draft_update(
 
 async fn draft_send(from: &str, draft_id: &str, human: bool) -> Result<()> {
     let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
@@ -4690,7 +4701,7 @@ async fn draft_send(from: &str, draft_id: &str, human: bool) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Account not found: {}", from))?;
     let from_email = &account.id;
 
-    let oauth = OAuthManager::new();
+    let oauth = OAuthManager::new(token_provider);
     let access_token = oauth.get_valid_token(from_email).await?;
     let client = reqwest::Client::new();
 
@@ -4753,6 +4764,7 @@ async fn draft_send(from: &str, draft_id: &str, human: bool) -> Result<()> {
 
 async fn draft_delete(from: &str, draft_id: &str, human: bool) -> Result<()> {
     let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
@@ -4762,7 +4774,7 @@ async fn draft_delete(from: &str, draft_id: &str, human: bool) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Account not found: {}", from))?;
     let from_email = &account.id;
 
-    let oauth = OAuthManager::new();
+    let oauth = OAuthManager::new(token_provider);
     let access_token = oauth.get_valid_token(from_email).await?;
     let client = reqwest::Client::new();
 

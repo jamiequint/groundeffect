@@ -22,11 +22,11 @@ use tracing_subscriber::Layer;
 use groundeffect_core::config::Config;
 use groundeffect_core::db::Database;
 use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel};
-use groundeffect_core::keychain::KeychainManager;
 use groundeffect_core::mcp::McpServer;
 use groundeffect_core::models::{Account, AccountStatus};
 use groundeffect_core::oauth::OAuthManager;
 use groundeffect_core::sync::{SyncEvent, SyncManager, SyncType};
+use groundeffect_core::token_provider::create_token_provider;
 
 #[derive(Parser)]
 #[command(name = "groundeffect-daemon")]
@@ -150,7 +150,10 @@ async fn add_account(alias: Option<String>) -> Result<()> {
         return Ok(());
     }
 
-    let oauth = OAuthManager::new();
+    // Initialize token provider and OAuth manager
+    let config = Config::load()?;
+    let token_provider = create_token_provider(&config).await?;
+    let oauth = OAuthManager::new(token_provider.clone());
 
     // Generate state for CSRF protection
     let state = format!("groundeffect_{}", uuid::Uuid::new_v4());
@@ -212,13 +215,12 @@ Content-Type: text/html; charset=utf-8
     // Exchange code for tokens
     let (tokens, user_info) = oauth.exchange_code(&code).await?;
 
-    // Store tokens in keychain
-    KeychainManager::store_tokens(&user_info.email, &tokens)?;
+    // Store tokens
+    token_provider.store_tokens(&user_info.email, &tokens).await?;
 
     println!(" Tokens stored securely\n");
 
-    // Load config and open database
-    let config = Config::load().unwrap_or_default();
+    // Open database (config already loaded above)
     std::fs::create_dir_all(config.lancedb_dir())?;
     let db = Database::open(config.lancedb_dir()).await?;
 
@@ -368,6 +370,7 @@ async fn remove_account(account: &str) -> Result<()> {
 
     let config = Config::load().unwrap_or_default();
     let db = Database::open(config.lancedb_dir()).await?;
+    let token_provider = create_token_provider(&config).await?;
 
     // Try to find account by email or alias
     let accounts = db.list_accounts().await?;
@@ -382,9 +385,9 @@ async fn remove_account(account: &str) -> Result<()> {
             // Remove from database
             db.delete_account(&acc.id).await?;
 
-            // Remove tokens from keychain
-            if let Err(e) = KeychainManager::delete_tokens(&acc.id) {
-                warn!("Failed to remove tokens from keychain: {}", e);
+            // Remove tokens from token provider
+            if let Err(e) = token_provider.delete_tokens(&acc.id).await {
+                warn!("Failed to remove tokens: {}", e);
             }
 
             println!(" Account removed successfully\n");
@@ -451,8 +454,9 @@ async fn run_daemon() -> Result<()> {
             })?,
     );
 
-    // Initialize OAuth manager
-    let oauth = Arc::new(OAuthManager::new());
+    // Initialize token provider and OAuth manager
+    let token_provider = create_token_provider(&config).await?;
+    let oauth = Arc::new(OAuthManager::new(token_provider));
 
     // Initialize sync manager
     let sync_manager = Arc::new(SyncManager::new(
@@ -678,8 +682,9 @@ async fn run_mcp_server() -> Result<()> {
         config.search.use_gpu,
     )?);
 
-    // Initialize OAuth manager
-    let oauth = Arc::new(OAuthManager::new());
+    // Initialize token provider and OAuth manager
+    let token_provider = create_token_provider(&config).await?;
+    let oauth = Arc::new(OAuthManager::new(token_provider));
 
     // Create and run MCP server
     let mcp = McpServer::new(db, config, embedding, oauth);

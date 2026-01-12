@@ -1,11 +1,14 @@
 //! OAuth 2.0 flow for Google authentication
 
+use std::sync::Arc;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
 use crate::error::{Error, Result};
-use crate::keychain::{KeychainManager, OAuthTokens};
+use crate::keychain::OAuthTokens;
+use crate::token_provider::TokenProvider;
 
 /// Google OAuth configuration
 pub struct GoogleOAuthConfig {
@@ -129,19 +132,21 @@ pub struct UserInfo {
 pub struct OAuthManager {
     config: GoogleOAuthConfig,
     client: Client,
+    token_provider: Arc<dyn TokenProvider>,
 }
 
 impl OAuthManager {
-    /// Create a new OAuth manager
-    pub fn new() -> Self {
-        Self::with_config(GoogleOAuthConfig::default())
+    /// Create a new OAuth manager with token provider
+    pub fn new(token_provider: Arc<dyn TokenProvider>) -> Self {
+        Self::with_config(GoogleOAuthConfig::default(), token_provider)
     }
 
     /// Create with custom config
-    pub fn with_config(config: GoogleOAuthConfig) -> Self {
+    pub fn with_config(config: GoogleOAuthConfig, token_provider: Arc<dyn TokenProvider>) -> Self {
         Self {
             config,
             client: Client::new(),
+            token_provider,
         }
     }
 
@@ -219,7 +224,9 @@ impl OAuthManager {
 
     /// Refresh an access token
     pub async fn refresh_token(&self, account_id: &str) -> Result<OAuthTokens> {
-        let current_tokens = KeychainManager::get_tokens(account_id)?
+        let current_tokens = self.token_provider
+            .get_tokens(account_id)
+            .await?
             .ok_or_else(|| Error::TokenExpired {
                 account: account_id.to_string(),
             })?;
@@ -264,7 +271,7 @@ impl OAuthManager {
         };
 
         // Store updated tokens
-        KeychainManager::store_tokens(account_id, &new_tokens)?;
+        self.token_provider.store_tokens(account_id, &new_tokens).await?;
         info!("Refreshed access token for {}", account_id);
 
         Ok(new_tokens)
@@ -295,7 +302,9 @@ impl OAuthManager {
     /// Get a valid access token, refreshing if necessary
     pub async fn get_valid_token(&self, account_id: &str) -> Result<String> {
         debug!("Getting valid token for {}", account_id);
-        let tokens = KeychainManager::get_tokens(account_id)?
+        let tokens = self.token_provider
+            .get_tokens(account_id)
+            .await?
             .ok_or_else(|| Error::TokenExpired {
                 account: account_id.to_string(),
             })?;
@@ -311,6 +320,11 @@ impl OAuthManager {
         }
     }
 
+    /// Get the token provider
+    pub fn token_provider(&self) -> &Arc<dyn TokenProvider> {
+        &self.token_provider
+    }
+
     /// Generate XOAUTH2 string for IMAP authentication
     /// Note: async_imap base64-encodes the response, so we return raw bytes
     pub fn generate_xoauth2(email: &str, access_token: &str) -> String {
@@ -320,11 +334,8 @@ impl OAuthManager {
     }
 }
 
-impl Default for OAuthManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Note: OAuthManager no longer implements Default since it requires a TokenProvider.
+// Use OAuthManager::new(token_provider) instead.
 
 // URL encoding helper
 mod urlencoding {
