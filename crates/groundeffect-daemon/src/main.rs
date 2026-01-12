@@ -6,7 +6,7 @@
 use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -456,7 +456,48 @@ async fn run_daemon() -> Result<()> {
 
     // Initialize token provider and OAuth manager
     let token_provider = create_token_provider(&config).await?;
-    let oauth = Arc::new(OAuthManager::new(token_provider));
+    let oauth = Arc::new(OAuthManager::new(token_provider.clone()));
+
+    // Auto-discover accounts from token store that aren't in LanceDB
+    // This handles the case where tokens are stored externally (e.g., via a web OAuth flow)
+    match token_provider.list_accounts().await {
+        Ok(token_accounts) => {
+            for email in token_accounts {
+                // Check if account already exists in LanceDB
+                if db.get_account(&email).await?.is_none() {
+                    info!("Auto-discovered account from token store: {}", email);
+                    // Create minimal account record
+                    // Default to syncing 1 year of history
+                    let sync_since = Some(Utc::now() - Duration::days(365));
+                    let account = Account {
+                        id: email.clone(),
+                        alias: None,
+                        display_name: email.clone(), // Will be updated on first sync
+                        added_at: Utc::now(),
+                        last_sync_email: None,
+                        last_sync_calendar: None,
+                        status: AccountStatus::Active,
+                        sync_email_since: sync_since,
+                        oldest_email_synced: None,
+                        oldest_event_synced: None,
+                        sync_attachments: false,
+                        estimated_total_emails: None,
+                    };
+                    if let Err(e) = db.upsert_account(&account).await {
+                        error!("Failed to create account record for {}: {}", email, e);
+                    } else {
+                        info!("Created account record for {} from token store", email);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to list accounts from token store: {}", e);
+        }
+    }
+
+    // Refresh the accounts list after auto-discovery
+    let accounts = db.list_accounts().await?;
 
     // Initialize sync manager
     let sync_manager = Arc::new(SyncManager::new(
