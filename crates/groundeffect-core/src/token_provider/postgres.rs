@@ -53,6 +53,7 @@ impl PostgresTokenProvider {
     ///
     /// * `database_url` - PostgreSQL connection string
     /// * `encryption_key` - User-provided encryption key (will be derived via HKDF)
+    /// * `table_name` - Optional custom table name (defaults to "groundeffect_tokens")
     ///
     /// # Example
     ///
@@ -60,9 +61,14 @@ impl PostgresTokenProvider {
     /// let provider = PostgresTokenProvider::new(
     ///     "postgres://user:pass@localhost/db",
     ///     "my-secret-key",
+    ///     Some("my_custom_table"),
     /// ).await?;
     /// ```
-    pub async fn new(database_url: &str, encryption_key: &str) -> Result<Self> {
+    pub async fn new(
+        database_url: &str,
+        encryption_key: &str,
+        table_name: Option<&str>,
+    ) -> Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .connect(database_url)
@@ -72,22 +78,24 @@ impl PostgresTokenProvider {
         let derived_key = Self::derive_key(encryption_key)?;
         let cipher = Aes256Gcm::new(&derived_key.into());
 
+        let table = table_name
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "groundeffect_tokens".to_string());
+
         let provider = Self {
             pool,
             cipher,
-            table_name: "groundeffect_tokens".to_string(),
+            table_name: table,
         };
 
-        // Ensure table exists
+        // Ensure table exists with the correct name
         provider.ensure_table().await?;
 
-        info!("PostgreSQL token provider initialized");
+        info!(
+            "PostgreSQL token provider initialized with table: {}",
+            provider.table_name
+        );
         Ok(provider)
-    }
-
-    /// Set a custom table name
-    pub fn set_table_name(&mut self, name: String) {
-        self.table_name = name;
     }
 
     /// Derive a 256-bit key from the user-provided key using HKDF

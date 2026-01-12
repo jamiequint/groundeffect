@@ -112,11 +112,12 @@ pub async fn create_token_provider(config: &Config) -> Result<Arc<dyn TokenProvi
                 ))
             })?;
 
-            let mut provider = PostgresTokenProvider::new(&url, &key).await?;
-
-            if let Some(name) = table_name {
-                provider.set_table_name(name.clone());
-            }
+            let provider = PostgresTokenProvider::new(
+                &url,
+                &key,
+                table_name.as_deref(),
+            )
+            .await?;
 
             Ok(Arc::new(provider))
         }
