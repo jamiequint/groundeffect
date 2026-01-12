@@ -13,7 +13,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
-use groundeffect_core::config::Config;
+use groundeffect_core::config::{Config, EmbeddingFallback};
 use groundeffect_core::db::Database;
 use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel, HybridEmbeddingProvider};
 use groundeffect_core::mcp::McpServer;
@@ -71,15 +71,24 @@ async fn main() -> Result<()> {
     let db = Arc::new(Database::open(&db_path).await?);
 
     // Initialize embedding engine with hybrid remote/local support
-    let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
-        .unwrap_or(EmbeddingModel::BgeBaseEn);
-    let local_embedding = Arc::new(
-        EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)
-            .map_err(|e| {
-                error!("Failed to load embedding model: {}", e);
-                e
-            })?,
-    );
+    // Skip loading local model if using remote with BM25 fallback (saves CPU/memory)
+    let local_embedding = if config.search.embedding_url.is_some()
+        && config.search.embedding_fallback == EmbeddingFallback::Bm25
+    {
+        info!("Skipping local embedding model (using remote with BM25 fallback)");
+        None
+    } else {
+        info!("Loading embedding model...");
+        let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
+            .unwrap_or(EmbeddingModel::BgeBaseEn);
+        Some(Arc::new(
+            EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)
+                .map_err(|e| {
+                    error!("Failed to load embedding model: {}", e);
+                    e
+                })?,
+        ))
+    };
     let embedding = Arc::new(HybridEmbeddingProvider::new(
         local_embedding,
         config.search.embedding_url.clone(),

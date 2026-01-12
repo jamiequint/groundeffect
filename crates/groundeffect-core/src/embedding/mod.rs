@@ -502,14 +502,16 @@ impl RemoteEmbeddingClient {
 /// Hybrid embedding provider that uses remote service with local fallback
 pub struct HybridEmbeddingProvider {
     remote: Option<RemoteEmbeddingClient>,
-    local: Arc<EmbeddingEngine>,
+    local: Option<Arc<EmbeddingEngine>>,
     fallback: EmbeddingFallback,
 }
 
 impl HybridEmbeddingProvider {
     /// Create a new hybrid embedding provider
+    ///
+    /// If `local` is None and fallback is `Local`, it will be changed to `Bm25`.
     pub fn new(
-        local: Arc<EmbeddingEngine>,
+        local: Option<Arc<EmbeddingEngine>>,
         remote_url: Option<String>,
         timeout_ms: u64,
         fallback: EmbeddingFallback,
@@ -529,10 +531,18 @@ impl HybridEmbeddingProvider {
             None
         };
 
+        // If no local engine and fallback is Local, change to Bm25
+        let actual_fallback = if local.is_none() && fallback == EmbeddingFallback::Local {
+            warn!("No local embedding engine provided, changing fallback from Local to Bm25");
+            EmbeddingFallback::Bm25
+        } else {
+            fallback
+        };
+
         Ok(Self {
             remote,
             local,
-            fallback,
+            fallback: actual_fallback,
         })
     }
 
@@ -561,9 +571,14 @@ impl HybridEmbeddingProvider {
         // Handle fallback
         match self.fallback {
             EmbeddingFallback::Local => {
-                debug!("Falling back to local embedding for {} texts", texts.len());
-                let embeddings = self.local.embed_batch(texts)?;
-                Ok(Some(embeddings))
+                if let Some(ref local) = self.local {
+                    debug!("Falling back to local embedding for {} texts", texts.len());
+                    let embeddings = local.embed_batch(texts)?;
+                    Ok(Some(embeddings))
+                } else {
+                    debug!("No local engine, falling back to BM25-only");
+                    Ok(None)
+                }
             }
             EmbeddingFallback::Bm25 => {
                 debug!("Falling back to BM25-only (no embeddings) for {} texts", texts.len());
@@ -588,13 +603,15 @@ impl HybridEmbeddingProvider {
         self.remote.as_ref().map(|r| r.is_available()).unwrap_or(false)
     }
 
-    /// Get the local embedding engine dimension
+    /// Get the embedding dimension (768 for bge-base-en-v1.5)
     pub fn dimension(&self) -> usize {
-        self.local.dimension()
+        // If we have a local engine, use its dimension
+        // Otherwise return the standard dimension for bge-base-en-v1.5
+        self.local.as_ref().map(|l| l.dimension()).unwrap_or(768)
     }
 
-    /// Get a reference to the local embedding engine
-    pub fn local_engine(&self) -> &Arc<EmbeddingEngine> {
-        &self.local
+    /// Get a reference to the local embedding engine if available
+    pub fn local_engine(&self) -> Option<&Arc<EmbeddingEngine>> {
+        self.local.as_ref()
     }
 }

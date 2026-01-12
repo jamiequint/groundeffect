@@ -10,7 +10,7 @@ use chrono_tz::Tz;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-use groundeffect_core::config::{Config, DaemonConfig};
+use groundeffect_core::config::{Config, DaemonConfig, EmbeddingFallback};
 use groundeffect_core::db::Database;
 use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel, HybridEmbeddingProvider};
 use groundeffect_core::models::{Account, AccountStatus, CalendarEvent, Email, EventTime};
@@ -1401,11 +1401,18 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
             let db = Arc::new(Database::open(config.lancedb_dir()).await?);
 
             // Initialize embedding engine with hybrid remote/local support
-            let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
-                .unwrap_or(EmbeddingModel::BgeBaseEn);
-            let local_embedding = Arc::new(
-                EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
-            );
+            // Skip loading local model if using remote with BM25 fallback (saves CPU/memory)
+            let local_embedding = if config.search.embedding_url.is_some()
+                && config.search.embedding_fallback == EmbeddingFallback::Bm25
+            {
+                None
+            } else {
+                let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
+                    .unwrap_or(EmbeddingModel::BgeBaseEn);
+                Some(Arc::new(
+                    EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
+                ))
+            };
             let embedding = Arc::new(HybridEmbeddingProvider::new(
                 local_embedding,
                 config.search.embedding_url.clone(),
@@ -1646,11 +1653,18 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
             let db = Arc::new(Database::open(config.lancedb_dir()).await?);
 
             // Initialize embedding engine with hybrid remote/local support
-            let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
-                .unwrap_or(EmbeddingModel::BgeBaseEn);
-            let local_embedding = Arc::new(
-                EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
-            );
+            // Skip loading local model if using remote with BM25 fallback (saves CPU/memory)
+            let local_embedding = if config.search.embedding_url.is_some()
+                && config.search.embedding_fallback == EmbeddingFallback::Bm25
+            {
+                None
+            } else {
+                let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
+                    .unwrap_or(EmbeddingModel::BgeBaseEn);
+                Some(Arc::new(
+                    EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
+                ))
+            };
             let embedding = Arc::new(HybridEmbeddingProvider::new(
                 local_embedding,
                 config.search.embedding_url.clone(),
