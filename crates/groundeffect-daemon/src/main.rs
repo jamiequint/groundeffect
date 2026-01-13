@@ -534,6 +534,16 @@ async fn run_daemon() -> Result<()> {
             Ok(_) => {
                 info!("Initialized sync for account {}", account.id);
 
+                // Reset status to Active if it was NeedsReauth (successful init proves auth works)
+                if account.status == AccountStatus::NeedsReauth {
+                    info!("Resetting account {} status from NeedsReauth to Active after successful init", account.id);
+                    let mut updated_account = account.clone();
+                    updated_account.status = AccountStatus::Active;
+                    if let Err(e) = db.upsert_account(&updated_account).await {
+                        error!("Failed to update account status: {}", e);
+                    }
+                }
+
                 // Always run initial_sync - it will decide whether to:
                 // - Skip (if historical sync already complete)
                 // - Resume (if partially synced)
@@ -670,6 +680,16 @@ async fn run_daemon() -> Result<()> {
                                 match sync_manager_poll.init_account(account).await {
                                     Ok(_) => {
                                         info!("Initialized sync for new account {}", account.id);
+
+                                        // Reset status to Active if it was NeedsReauth
+                                        if account.status == AccountStatus::NeedsReauth {
+                                            info!("Resetting account {} status from NeedsReauth to Active after successful init", account.id);
+                                            let mut updated_account = account.clone();
+                                            updated_account.status = AccountStatus::Active;
+                                            if let Err(e) = db_poll.upsert_account(&updated_account).await {
+                                                error!("Failed to update account status: {}", e);
+                                            }
+                                        }
 
                                         // Run initial sync
                                         info!("Starting initial sync for {}", account.id);
