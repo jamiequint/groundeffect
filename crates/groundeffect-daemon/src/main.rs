@@ -586,6 +586,17 @@ async fn run_daemon() -> Result<()> {
                         account_id, sync_type, count
                     );
 
+                    // Reset status to Active if it was NeedsReauth (successful sync proves auth works)
+                    if let Ok(Some(mut account)) = db_clone.get_account(&account_id).await {
+                        if account.status == AccountStatus::NeedsReauth {
+                            info!("Resetting account {} status from NeedsReauth to Active after successful sync", account_id);
+                            account.status = AccountStatus::Active;
+                            if let Err(e) = db_clone.upsert_account(&account).await {
+                                error!("Failed to update account status: {}", e);
+                            }
+                        }
+                    }
+
                     // Rebuild FTS indexes if enough time has passed since last rebuild
                     if count > 0 {
                         let should_rebuild = last_fts_rebuild
