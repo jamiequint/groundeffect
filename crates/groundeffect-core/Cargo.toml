@@ -65,13 +65,14 @@ html2text = { workspace = true }
 regex = { workspace = true }
 
 # Optional dependencies for postgres feature
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres"], optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono"], optional = true }
 aes-gcm = { version = "0.10", optional = true }
 hkdf = { version = "0.12", optional = true }
 sha2 = { version = "0.10", optional = true }
+fernet = { version = "0.2", optional = true }
 
 [features]
 default = []
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
-postgres = ["sqlx", "aes-gcm", "hkdf", "sha2"]
+postgres = ["sqlx", "aes-gcm", "hkdf", "sha2", "fernet"]

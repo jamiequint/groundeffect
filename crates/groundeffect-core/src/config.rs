@@ -59,7 +59,16 @@ impl Default for Config {
 /// provider = "file"
 /// ```
 ///
-/// PostgreSQL (requires "postgres" feature):
+/// Dawn (reads from Dawn's oauth_tokens table with Fernet encryption):
+/// ```toml
+/// [tokens]
+/// provider = "dawn"
+/// database_url_env = "DATABASE_URL"
+/// encryption_key_env = "ENCRYPTION_KEY"
+/// user_id_env = "USER_ID"
+/// ```
+///
+/// PostgreSQL (legacy - requires "postgres" feature):
 /// ```toml
 /// [tokens]
 /// provider = "postgres"
@@ -73,7 +82,33 @@ pub enum TokenProviderConfig {
     /// Stores tokens in ~/.config/groundeffect/tokens/<account>.json
     File,
 
-    /// PostgreSQL-based token storage
+    /// Dawn token storage - reads from Dawn's oauth_tokens table
+    /// Uses Fernet encryption (same as Dawn backend)
+    /// Requires the "postgres" feature to be enabled
+    Dawn {
+        /// Direct database URL (optional if database_url_env is set)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        database_url: Option<String>,
+
+        /// Environment variable containing the database URL
+        #[serde(skip_serializing_if = "Option::is_none")]
+        database_url_env: Option<String>,
+
+        /// Environment variable containing the Fernet encryption key (required)
+        /// This should be the same ENCRYPTION_KEY used by Dawn backend
+        encryption_key_env: String,
+
+        /// Static user_id for multi-tenant isolation (optional if user_id_env is set)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        user_id: Option<String>,
+
+        /// Environment variable containing the user_id (optional if user_id is set)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        user_id_env: Option<String>,
+    },
+
+    /// PostgreSQL-based token storage (legacy)
+    /// Uses AES-256-GCM encryption with separate groundeffect_tokens table
     /// Requires the "postgres" feature to be enabled
     Postgres {
         /// Direct database URL (optional if database_url_env is set)

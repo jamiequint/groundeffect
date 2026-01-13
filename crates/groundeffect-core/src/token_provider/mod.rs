@@ -22,9 +22,13 @@
 
 mod file;
 #[cfg(feature = "postgres")]
+mod dawn;
+#[cfg(feature = "postgres")]
 mod postgres;
 
 pub use file::FileTokenProvider;
+#[cfg(feature = "postgres")]
+pub use dawn::DawnTokenProvider;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresTokenProvider;
 
@@ -82,6 +86,63 @@ pub async fn create_token_provider(config: &Config) -> Result<Arc<dyn TokenProvi
     match &config.tokens {
         TokenProviderConfig::File => {
             Ok(Arc::new(FileTokenProvider::new()))
+        }
+        #[cfg(feature = "postgres")]
+        TokenProviderConfig::Dawn {
+            database_url,
+            database_url_env,
+            encryption_key_env,
+            user_id,
+            user_id_env,
+        } => {
+            use crate::error::Error;
+
+            // Resolve database URL
+            let url = database_url
+                .clone()
+                .or_else(|| {
+                    database_url_env
+                        .as_ref()
+                        .and_then(|env| std::env::var(env).ok())
+                })
+                .ok_or_else(|| {
+                    Error::Config("database_url or database_url_env required for dawn provider".to_string())
+                })?;
+
+            // Get Fernet encryption key from environment
+            let key = std::env::var(encryption_key_env).map_err(|_| {
+                Error::Config(format!(
+                    "Fernet encryption key env var {} not set",
+                    encryption_key_env
+                ))
+            })?;
+
+            // Resolve user_id from config or environment variable (required for Dawn)
+            let resolved_user_id = user_id
+                .clone()
+                .or_else(|| {
+                    user_id_env
+                        .as_ref()
+                        .and_then(|env| std::env::var(env).ok())
+                })
+                .ok_or_else(|| {
+                    Error::Config("user_id or user_id_env required for dawn provider".to_string())
+                })?;
+
+            let provider = DawnTokenProvider::new(
+                &url,
+                &key,
+                &resolved_user_id,
+            )
+            .await?;
+
+            Ok(Arc::new(provider))
+        }
+        #[cfg(not(feature = "postgres"))]
+        TokenProviderConfig::Dawn { .. } => {
+            Err(crate::error::Error::Config(
+                "Dawn token provider requires the 'postgres' feature".to_string(),
+            ))
         }
         #[cfg(feature = "postgres")]
         TokenProviderConfig::Postgres {

@@ -37,12 +37,14 @@ impl Default for GoogleOAuthConfig {
 impl GoogleOAuthConfig {
     /// Load OAuth credentials from env vars or ~/.secrets file
     fn load_credentials() -> (String, String) {
-        // Try env vars first (both naming conventions)
+        // Try env vars first (multiple naming conventions)
         let client_id = std::env::var("GROUNDEFFECT_CLIENT_ID")
             .or_else(|_| std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_ID"))
+            .or_else(|_| std::env::var("GOOGLE_CLIENT_ID"))
             .ok();
         let client_secret = std::env::var("GROUNDEFFECT_CLIENT_SECRET")
             .or_else(|_| std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_SECRET"))
+            .or_else(|_| std::env::var("GOOGLE_CLIENT_SECRET"))
             .ok();
 
         if let (Some(id), Some(secret)) = (client_id, client_secret) {
