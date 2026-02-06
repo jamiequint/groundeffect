@@ -240,6 +240,18 @@ impl Default for EmbeddingFallback {
     }
 }
 
+/// Embedding backend provider
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingProvider {
+    /// Use the local Candle model
+    Local,
+    /// Use OpenRouter embeddings API
+    OpenRouter,
+    /// Use custom remote `/embed` HTTP service (legacy/default when embedding_url is set)
+    Remote,
+}
+
 /// Search settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
@@ -269,10 +281,29 @@ pub struct SearchConfig {
     #[serde(default = "default_embedding_gpu_threshold")]
     pub embedding_gpu_threshold: usize,
 
-    /// URL of remote embedding service (e.g., "http://dawn-embeddings.internal:8000")
-    /// If set, embeddings will be requested from this service instead of generated locally.
+    /// URL of custom remote embedding service (e.g., "http://dawn-embeddings.internal:8000")
+    /// Used when provider is `remote` (or legacy mode where this is set and provider omitted).
     #[serde(default)]
     pub embedding_url: Option<String>,
+
+    /// Explicit embedding provider override.
+    /// If omitted, provider is inferred:
+    /// - `remote` when `embedding_url` is set
+    /// - otherwise `local`
+    #[serde(default)]
+    pub embedding_provider: Option<EmbeddingProvider>,
+
+    /// OpenRouter base URL
+    #[serde(default = "default_openrouter_base_url")]
+    pub openrouter_base_url: String,
+
+    /// OpenRouter embedding model identifier
+    #[serde(default = "default_openrouter_model")]
+    pub openrouter_model: String,
+
+    /// Environment variable name containing OpenRouter API key
+    #[serde(default = "default_openrouter_api_key_env")]
+    pub openrouter_api_key_env: String,
 
     /// What to do when remote embedding service is unavailable
     #[serde(default)]
@@ -293,8 +324,34 @@ impl Default for SearchConfig {
             embedding_batch_size: default_embedding_batch_size(),
             embedding_gpu_threshold: default_embedding_gpu_threshold(),
             embedding_url: None,
+            embedding_provider: None,
+            openrouter_base_url: default_openrouter_base_url(),
+            openrouter_model: default_openrouter_model(),
+            openrouter_api_key_env: default_openrouter_api_key_env(),
             embedding_fallback: EmbeddingFallback::default(),
             embedding_timeout_ms: default_embedding_timeout_ms(),
+        }
+    }
+}
+
+impl SearchConfig {
+    /// Resolve the effective provider, preserving backward compatibility.
+    pub fn effective_embedding_provider(&self) -> EmbeddingProvider {
+        self.embedding_provider.unwrap_or_else(|| {
+            if self.embedding_url.is_some() {
+                EmbeddingProvider::Remote
+            } else {
+                EmbeddingProvider::Local
+            }
+        })
+    }
+
+    /// True when search should attempt a remote embedding provider.
+    pub fn remote_embeddings_enabled(&self) -> bool {
+        match self.effective_embedding_provider() {
+            EmbeddingProvider::Local => false,
+            EmbeddingProvider::OpenRouter => true,
+            EmbeddingProvider::Remote => self.embedding_url.is_some(),
         }
     }
 }
@@ -410,15 +467,27 @@ fn default_search_weight() -> f32 {
 }
 
 fn default_embedding_batch_size() -> usize {
-    1  // Minimal memory footprint, safe for 1GB containers
+    1 // Minimal memory footprint, safe for 1GB containers
 }
 
 fn default_embedding_gpu_threshold() -> usize {
-    10  // Route most bulk work to GPU service
+    10 // Route most bulk work to GPU service
 }
 
 fn default_embedding_timeout_ms() -> u64 {
-    30000  // 30 seconds - embedding can be slow on first request (model loading)
+    30000 // 30 seconds - embedding can be slow on first request (model loading)
+}
+
+fn default_openrouter_base_url() -> String {
+    "https://openrouter.ai/api/v1".to_string()
+}
+
+fn default_openrouter_model() -> String {
+    "openai/text-embedding-3-small".to_string()
+}
+
+fn default_openrouter_api_key_env() -> String {
+    "OPENROUTER_API_KEY".to_string()
 }
 
 fn default_recent_items() -> usize {
@@ -473,8 +542,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let contents =
-            toml::to_string_pretty(self).map_err(|e| Error::Config(e.to_string()))?;
+        let contents = toml::to_string_pretty(self).map_err(|e| Error::Config(e.to_string()))?;
         std::fs::write(path, contents)?;
         info!("Saved configuration to {:?}", path);
         Ok(())
@@ -598,8 +666,7 @@ impl DaemonConfig {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let contents = toml::to_string_pretty(self)
-            .map_err(|e| Error::Config(e.to_string()))?;
+        let contents = toml::to_string_pretty(self).map_err(|e| Error::Config(e.to_string()))?;
         std::fs::write(&path, contents)?;
         info!("Saved daemon config to {:?}", path);
         Ok(())
@@ -653,5 +720,26 @@ mod tests {
             Some("other@example.com".to_string())
         );
         assert_eq!(config.resolve_account("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_effective_embedding_provider_defaults() {
+        let config = Config::default();
+        assert_eq!(
+            config.search.effective_embedding_provider(),
+            EmbeddingProvider::Local
+        );
+        assert!(!config.search.remote_embeddings_enabled());
+    }
+
+    #[test]
+    fn test_effective_embedding_provider_legacy_remote_url() {
+        let mut config = Config::default();
+        config.search.embedding_url = Some("http://localhost:8000".to_string());
+        assert_eq!(
+            config.search.effective_embedding_provider(),
+            EmbeddingProvider::Remote
+        );
+        assert!(config.search.remote_embeddings_enabled());
     }
 }

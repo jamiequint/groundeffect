@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
 use tracing::{debug, info, warn};
 
-use crate::config::EmbeddingFallback;
+use crate::config::{EmbeddingFallback, EmbeddingProvider, SearchConfig};
 use crate::error::{Error, Result};
 use crate::EMBEDDING_DIMENSION;
 
@@ -380,7 +380,7 @@ impl EmbeddingEngine {
 // Remote Embedding Client
 // ============================================================================
 
-/// Request body for the remote /embed endpoint
+/// Request body for the custom remote /embed endpoint
 #[derive(Debug, Serialize)]
 struct RemoteEmbedRequest {
     texts: Vec<String>,
@@ -388,7 +388,7 @@ struct RemoteEmbedRequest {
     model: Option<String>,
 }
 
-/// Response body from the remote /embed endpoint
+/// Response body from the custom remote /embed endpoint
 #[derive(Debug, Deserialize)]
 struct RemoteEmbedResponse {
     embeddings: Vec<Vec<f32>>,
@@ -397,15 +397,46 @@ struct RemoteEmbedResponse {
     count: usize,
 }
 
-/// Client for remote embedding service (dawn-embeddings)
+/// Request body for OpenRouter /embeddings endpoint
+#[derive(Debug, Serialize)]
+struct OpenRouterEmbedRequest {
+    model: String,
+    input: Vec<String>,
+    encoding_format: String,
+}
+
+/// Response body from OpenRouter /embeddings endpoint
+#[derive(Debug, Deserialize)]
+struct OpenRouterEmbedResponse {
+    data: Vec<OpenRouterEmbedItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenRouterEmbedItem {
+    embedding: Vec<f32>,
+    index: usize,
+}
+
+#[derive(Debug)]
+enum RemoteEmbeddingKind {
+    DawnCompatible {
+        model: String,
+    },
+    OpenRouter {
+        api_key: String,
+        model: String,
+    },
+}
+
+/// Client for remote embedding service (custom /embed or OpenRouter)
 pub struct RemoteEmbeddingClient {
     client: reqwest::blocking::Client,
     url: String,
-    timeout: Duration,
+    kind: RemoteEmbeddingKind,
 }
 
 impl RemoteEmbeddingClient {
-    /// Create a new remote embedding client
+    /// Create a new remote embedding client for custom /embed APIs.
     pub fn new(url: String, timeout_ms: u64) -> Result<Self> {
         let timeout = Duration::from_millis(timeout_ms);
         let client = reqwest::blocking::Client::builder()
@@ -417,7 +448,25 @@ impl RemoteEmbeddingClient {
         Ok(Self {
             client,
             url,
-            timeout,
+            kind: RemoteEmbeddingKind::DawnCompatible {
+                model: "bge-base-en-v1.5".to_string(),
+            },
+        })
+    }
+
+    /// Create a new remote embedding client for OpenRouter.
+    pub fn new_openrouter(url: String, api_key: String, model: String, timeout_ms: u64) -> Result<Self> {
+        let timeout = Duration::from_millis(timeout_ms);
+        let client = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|e| Error::Embedding(format!("Failed to create HTTP client: {}", e)))?;
+
+        info!("Created OpenRouter embedding client for {}", url);
+        Ok(Self {
+            client,
+            url,
+            kind: RemoteEmbeddingKind::OpenRouter { api_key, model },
         })
     }
 
@@ -433,51 +482,85 @@ impl RemoteEmbeddingClient {
             self.url
         );
 
-        let request = RemoteEmbedRequest {
-            texts: texts.to_vec(),
-            model: Some("bge-base-en-v1.5".to_string()),
-        };
+        match &self.kind {
+            RemoteEmbeddingKind::DawnCompatible { model } => {
+                let request = RemoteEmbedRequest {
+                    texts: texts.to_vec(),
+                    model: Some(model.clone()),
+                };
 
-        let response = self
-            .client
-            .post(format!("{}/embed", self.url))
-            .json(&request)
-            .send()
-            .map_err(|e| Error::Embedding(format!("Remote embedding request failed: {}", e)))?;
+                let response = self
+                    .client
+                    .post(format!("{}/embed", self.url.trim_end_matches('/')))
+                    .json(&request)
+                    .send()
+                    .map_err(|e| Error::Embedding(format!("Remote embedding request failed: {}", e)))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().unwrap_or_default();
-            return Err(Error::Embedding(format!(
-                "Remote embedding service returned {}: {}",
-                status, body
-            )));
-        }
-
-        let result: RemoteEmbedResponse = response
-            .json()
-            .map_err(|e| Error::Embedding(format!("Failed to parse embedding response: {}", e)))?;
-
-        debug!(
-            "Received {} embeddings (dimension: {}) from remote service",
-            result.count, result.dimension
-        );
-
-        // Ensure embeddings match our expected dimension
-        let embeddings: Vec<Vec<f32>> = result
-            .embeddings
-            .into_iter()
-            .map(|mut e| {
-                // Pad or truncate to EMBEDDING_DIMENSION
-                while e.len() < EMBEDDING_DIMENSION {
-                    e.push(0.0);
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let body = response.text().unwrap_or_default();
+                    return Err(Error::Embedding(format!(
+                        "Remote embedding service returned {}: {}",
+                        status, body
+                    )));
                 }
-                e.truncate(EMBEDDING_DIMENSION);
-                e
-            })
-            .collect();
 
-        Ok(embeddings)
+                let result: RemoteEmbedResponse = response
+                    .json()
+                    .map_err(|e| Error::Embedding(format!("Failed to parse embedding response: {}", e)))?;
+
+                debug!(
+                    "Received {} embeddings (dimension: {}, model: {}) from remote service",
+                    result.count, result.dimension, result.model
+                );
+
+                Ok(Self::fit_embeddings(result.embeddings))
+            }
+            RemoteEmbeddingKind::OpenRouter { api_key, model } => {
+                let request = OpenRouterEmbedRequest {
+                    model: model.clone(),
+                    input: texts.to_vec(),
+                    encoding_format: "float".to_string(),
+                };
+
+                let response = self
+                    .client
+                    .post(format!("{}/embeddings", self.url.trim_end_matches('/')))
+                    .bearer_auth(api_key)
+                    .json(&request)
+                    .send()
+                    .map_err(|e| Error::Embedding(format!("OpenRouter embedding request failed: {}", e)))?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let body = response.text().unwrap_or_default();
+                    return Err(Error::Embedding(format!(
+                        "OpenRouter returned {}: {}",
+                        status, body
+                    )));
+                }
+
+                let mut result: OpenRouterEmbedResponse = response
+                    .json()
+                    .map_err(|e| Error::Embedding(format!("Failed to parse OpenRouter response: {}", e)))?;
+
+                // Keep the same order as input.
+                result.data.sort_by_key(|item| item.index);
+                let embeddings = result
+                    .data
+                    .into_iter()
+                    .map(|item| item.embedding)
+                    .collect::<Vec<_>>();
+
+                debug!(
+                    "Received {} embeddings from OpenRouter model {}",
+                    embeddings.len(),
+                    model
+                );
+
+                Ok(Self::fit_embeddings(embeddings))
+            }
+        }
     }
 
     /// Generate embedding for a single text
@@ -488,10 +571,30 @@ impl RemoteEmbeddingClient {
 
     /// Check if the remote service is available
     pub fn is_available(&self) -> bool {
-        match self.client.get(format!("{}/health", self.url)).send() {
-            Ok(resp) => resp.status().is_success(),
-            Err(_) => false,
+        match &self.kind {
+            RemoteEmbeddingKind::DawnCompatible { .. } => {
+                match self.client.get(format!("{}/health", self.url.trim_end_matches('/'))).send() {
+                    Ok(resp) => resp.status().is_success(),
+                    Err(_) => false,
+                }
+            }
+            // OpenRouter has no lightweight unauthenticated health check.
+            RemoteEmbeddingKind::OpenRouter { .. } => true,
         }
+    }
+
+    fn fit_embeddings(embeddings: Vec<Vec<f32>>) -> Vec<Vec<f32>> {
+        embeddings
+            .into_iter()
+            .map(|mut e| {
+                // Pad or truncate to EMBEDDING_DIMENSION
+                while e.len() < EMBEDDING_DIMENSION {
+                    e.push(0.0);
+                }
+                e.truncate(EMBEDDING_DIMENSION);
+                e
+            })
+            .collect()
     }
 }
 
@@ -537,6 +640,78 @@ impl HybridEmbeddingProvider {
             EmbeddingFallback::Bm25
         } else {
             fallback
+        };
+
+        Ok(Self {
+            remote,
+            local,
+            fallback: actual_fallback,
+        })
+    }
+
+    /// Create from search config. Supports local, remote, and OpenRouter providers.
+    pub fn from_search_config(local: Option<Arc<EmbeddingEngine>>, search: &SearchConfig) -> Result<Self> {
+        let remote = match search.effective_embedding_provider() {
+            EmbeddingProvider::Local => None,
+            EmbeddingProvider::Remote => {
+                if let Some(url) = search.embedding_url.clone() {
+                    match RemoteEmbeddingClient::new(url.clone(), search.embedding_timeout_ms) {
+                        Ok(client) => {
+                            info!("Remote embedding service configured at {}", url);
+                            Some(client)
+                        }
+                        Err(e) => {
+                            warn!("Failed to create remote embedding client: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    warn!("embedding_provider is 'remote' but search.embedding_url is unset; using fallback only");
+                    None
+                }
+            }
+            EmbeddingProvider::OpenRouter => {
+                let env_name = search.openrouter_api_key_env.trim();
+                if env_name.is_empty() {
+                    warn!("search.openrouter_api_key_env is empty; using fallback only");
+                    None
+                } else {
+                    match std::env::var(env_name) {
+                        Ok(api_key) if !api_key.trim().is_empty() => {
+                            match RemoteEmbeddingClient::new_openrouter(
+                                search.openrouter_base_url.clone(),
+                                api_key,
+                                search.openrouter_model.clone(),
+                                search.embedding_timeout_ms,
+                            ) {
+                                Ok(client) => {
+                                    info!("OpenRouter embedding configured with model {}", search.openrouter_model);
+                                    Some(client)
+                                }
+                                Err(e) => {
+                                    warn!("Failed to create OpenRouter embedding client: {}", e);
+                                    None
+                                }
+                            }
+                        }
+                        _ => {
+                            warn!(
+                                "OpenRouter provider selected but API key env '{}' is missing/empty; using fallback only",
+                                env_name
+                            );
+                            None
+                        }
+                    }
+                }
+            }
+        };
+
+        // If no local engine and fallback is Local, change to Bm25
+        let actual_fallback = if local.is_none() && search.embedding_fallback == EmbeddingFallback::Local {
+            warn!("No local embedding engine provided, changing fallback from Local to Bm25");
+            EmbeddingFallback::Bm25
+        } else {
+            search.embedding_fallback
         };
 
         Ok(Self {

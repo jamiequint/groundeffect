@@ -65,6 +65,7 @@ All commands output JSON by default. Add `--human` for readable output.
 | `account list` | List all connected accounts |
 | `account show <account>` | Show account details and sync status |
 | `account add` | Add new Google account via OAuth |
+| `account reauth <account>` | Re-authenticate an existing account via OAuth |
 | `account delete <account>` | Remove account and all synced data |
 | `account configure <account>` | Update account settings (alias, attachments) |
 
@@ -209,6 +210,23 @@ Use `calendar events` to answer questions like "what's on my calendar tomorrow" 
 | `--calendar-interval` | Calendar poll interval in seconds (60-3600) | 300 |
 | `--max-fetches` | Max concurrent fetches (1-50) | 10 |
 | `--timezone` | User timezone for date parsing (e.g., America/Los_Angeles) | UTC |
+| `--embedding-provider` | Embedding backend: `local`, `openrouter`, `remote` | local |
+| `--openrouter-model` | OpenRouter embedding model ID | `openai/text-embedding-3-small` |
+| `--openrouter-api-key-env` | Env var name with OpenRouter API key | `OPENROUTER_API_KEY` |
+
+**Embeddings backend examples:**
+
+```bash
+# Use local embeddings (default)
+groundeffect config settings --embedding-provider local
+
+# Use OpenRouter embeddings
+export OPENROUTER_API_KEY="your-key"
+groundeffect config settings --embedding-provider openrouter
+
+# Optional: set a different OpenRouter model
+groundeffect config settings --openrouter-model "openai/text-embedding-3-large"
+```
 
 ## MCP Integration (Alternative)
 
@@ -324,7 +342,7 @@ Tokens are encrypted at rest using AES-256-GCM with a key derived from your encr
 
 Re-authenticate:
 ```bash
-groundeffect account add
+groundeffect account reauth <email-or-alias>
 ```
 
 ### Daemon not running

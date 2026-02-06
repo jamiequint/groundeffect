@@ -92,6 +92,35 @@ groundeffect account add --alias archive --years all
 
 ---
 
+## groundeffect account reauth
+
+Re-authenticate an existing account via OAuth without changing sync settings.
+
+```bash
+groundeffect account reauth <email|alias> [options]
+```
+
+### Options
+| Flag | Description |
+|------|-------------|
+| `--human` | Human-readable output |
+
+### Notes
+- Opens browser for OAuth flow
+- Refreshes stored OAuth tokens
+- Marks account status back to active on success
+
+### Examples
+```bash
+# Re-auth by email
+groundeffect account reauth user@gmail.com
+
+# Re-auth by alias
+groundeffect account reauth work --human
+```
+
+---
+
 ## groundeffect account delete
 
 Remove an account and all associated synced data.
@@ -135,32 +164,23 @@ groundeffect account configure <email|alias> [options]
 | Flag | Description | Example |
 |------|-------------|---------|
 | `--alias` | Set or update alias (use empty string to remove) | `--alias work` |
-| `--sync-email` | Enable/disable email sync | `--sync-email true` |
-| `--sync-calendar` | Enable/disable calendar sync | `--sync-calendar false` |
-| `--sync-attachments` | Enable/disable automatic attachment downloads | `--sync-attachments true` |
-| `--folders` | Folders to sync (comma-separated, empty for all) | `--folders "INBOX,Sent"` |
+| `--attachments` | Enable automatic attachment downloads | `--attachments` |
+| `--no-attachments` | Disable automatic attachment downloads | `--no-attachments` |
 | `--human` | Human-readable output | `--human` |
 
 ### Notes
-- Changes to `sync-attachments` require daemon restart to take effect
-- Setting `--folders ""` syncs all available folders
+- Changes to attachment syncing require daemon restart to take effect
 
 ### Examples
 ```bash
 # Set alias
 groundeffect account configure user@gmail.com --alias personal
 
-# Disable calendar sync
-groundeffect account configure work --sync-calendar false
-
 # Enable attachment downloads
-groundeffect account configure work --sync-attachments true
+groundeffect account configure work --attachments
 
-# Sync only specific folders
-groundeffect account configure personal --folders "INBOX,Sent,Important"
-
-# Reset to sync all folders
-groundeffect account configure personal --folders ""
+# Disable attachment downloads
+groundeffect account configure work --no-attachments
 
 # Remove alias
 groundeffect account configure user@gmail.com --alias ""

@@ -10,7 +10,7 @@ use chrono_tz::Tz;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-use groundeffect_core::config::{Config, DaemonConfig, EmbeddingFallback};
+use groundeffect_core::config::{Config, DaemonConfig, EmbeddingFallback, EmbeddingProvider};
 use groundeffect_core::db::Database;
 use groundeffect_core::embedding::{EmbeddingEngine, EmbeddingModel, HybridEmbeddingProvider};
 use groundeffect_core::models::{Account, AccountStatus, CalendarEvent, Email, EventTime};
@@ -782,6 +782,25 @@ EXAMPLES:
         #[arg(long)]
         human: bool,
     },
+    /// Re-authenticate an existing account via OAuth without changing sync settings.
+    #[command(long_about = "Re-authenticate an existing account.
+
+This refreshes OAuth credentials for an already-configured account without
+changing alias, sync range, or attachment settings.
+
+REQUIRED PARAMETERS:
+  <account>  Account email or alias
+
+EXAMPLES:
+  groundeffect account reauth work
+  groundeffect account reauth user@gmail.com")]
+    Reauth {
+        /// Account email or alias
+        account: String,
+        /// Human-readable output instead of JSON
+        #[arg(long)]
+        human: bool,
+    },
     /// Delete an account and all its synced data.
     /// Returns JSON: {success: bool, deleted: {account, emails, events}}.
     #[command(long_about = "Delete an account and all its synced data.
@@ -1142,10 +1161,14 @@ CONFIGURABLE SETTINGS:
   --calendar-interval <secs> Calendar poll interval (60-3600 seconds)
   --max-fetches <num>        Max concurrent fetches (1-50)
   --timezone <tz>            User timezone (e.g., America/Los_Angeles, UTC)
+  --embedding-provider <p>   Embedding backend: local | openrouter | remote
+  --openrouter-model <id>    OpenRouter embedding model (when provider=openrouter)
+  --openrouter-api-key-env <name>
+                             Env var name containing OpenRouter API key
 
 CONFIG FILES:
   ~/.config/groundeffect/daemon.toml (daemon settings)
-  ~/.config/groundeffect/config.toml (general settings including timezone)
+  ~/.config/groundeffect/config.toml (general/search settings)
 
 Note: Changes require a daemon restart to take effect.
 
@@ -1157,7 +1180,13 @@ EXAMPLES:
   groundeffect config settings --logging true
 
   # Set poll intervals
-  groundeffect config settings --email-interval 600 --calendar-interval 600")]
+  groundeffect config settings --email-interval 600 --calendar-interval 600
+
+  # Use OpenRouter embeddings
+  groundeffect config settings --embedding-provider openrouter
+
+  # Switch back to local embeddings
+  groundeffect config settings --embedding-provider local")]
     Settings {
         /// Enable/disable file logging
         #[arg(long)]
@@ -1174,6 +1203,15 @@ EXAMPLES:
         /// User timezone (e.g., America/Los_Angeles, UTC, Europe/London)
         #[arg(long)]
         timezone: Option<String>,
+        /// Embedding backend: local, openrouter, or remote
+        #[arg(long)]
+        embedding_provider: Option<String>,
+        /// OpenRouter embedding model (e.g., openai/text-embedding-3-small)
+        #[arg(long)]
+        openrouter_model: Option<String>,
+        /// Environment variable containing OpenRouter API key
+        #[arg(long)]
+        openrouter_api_key_env: Option<String>,
         /// Human-readable output instead of JSON
         #[arg(long)]
         human: bool,
@@ -1402,7 +1440,7 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
 
             // Initialize embedding engine with hybrid remote/local support
             // Skip loading local model if using remote with BM25 fallback (saves CPU/memory)
-            let local_embedding = if config.search.embedding_url.is_some()
+            let local_embedding = if config.search.remote_embeddings_enabled()
                 && config.search.embedding_fallback == EmbeddingFallback::Bm25
             {
                 None
@@ -1413,11 +1451,9 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
                     EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
                 ))
             };
-            let embedding = Arc::new(HybridEmbeddingProvider::new(
+            let embedding = Arc::new(HybridEmbeddingProvider::from_search_config(
                 local_embedding,
-                config.search.embedding_url.clone(),
-                config.search.embedding_timeout_ms,
-                config.search.embedding_fallback,
+                &config.search,
             )?);
 
             let search_engine = SearchEngine::new(db.clone(), embedding);
@@ -1654,7 +1690,7 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
 
             // Initialize embedding engine with hybrid remote/local support
             // Skip loading local model if using remote with BM25 fallback (saves CPU/memory)
-            let local_embedding = if config.search.embedding_url.is_some()
+            let local_embedding = if config.search.remote_embeddings_enabled()
                 && config.search.embedding_fallback == EmbeddingFallback::Bm25
             {
                 None
@@ -1665,11 +1701,9 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                     EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
                 ))
             };
-            let embedding = Arc::new(HybridEmbeddingProvider::new(
+            let embedding = Arc::new(HybridEmbeddingProvider::from_search_config(
                 local_embedding,
-                config.search.embedding_url.clone(),
-                config.search.embedding_timeout_ms,
-                config.search.embedding_fallback,
+                &config.search,
             )?);
 
             let search_engine = SearchEngine::new(db.clone(), embedding);
@@ -2125,6 +2159,11 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
         AccountCommands::Add { years, attachments, alias, human } => {
             let human = human || global_human;
             account_add(years, attachments, alias, human).await?;
+        }
+
+        AccountCommands::Reauth { account, human } => {
+            let human = human || global_human;
+            account_reauth(&account, human).await?;
         }
 
         AccountCommands::Delete { account, confirm, human } => {
@@ -2995,6 +3034,165 @@ async fn account_add(years: Option<String>, attachments: bool, alias: Option<Str
     Ok(())
 }
 
+async fn account_reauth(account: &str, human: bool) -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+
+    let config = Config::load().unwrap_or_default();
+    let token_provider = create_token_provider(&config).await?;
+    let db = Database::open(config.lancedb_dir()).await?;
+    let accounts = db.list_accounts().await?;
+
+    let email = accounts.iter()
+        .find(|a| a.id == account || a.alias.as_ref() == Some(&account.to_string()))
+        .map(|a| a.id.clone());
+
+    let email = match email {
+        Some(e) => e,
+        None => {
+            if human {
+                println!("❌ Account not found: {}", account);
+            } else {
+                println!("{{\"success\": false, \"error\": \"Account not found\"}}");
+            }
+            return Ok(());
+        }
+    };
+
+    // Check for OAuth credentials
+    let client_id = std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_ID");
+    let client_secret = std::env::var("GROUNDEFFECT_GOOGLE_CLIENT_SECRET");
+
+    if client_id.is_err() || client_secret.is_err() {
+        if human {
+            println!("\n❌ OAuth credentials not configured!\n");
+            println!("Please set the following environment variables:");
+            println!("  export GROUNDEFFECT_GOOGLE_CLIENT_ID=\"your-client-id\"");
+            println!("  export GROUNDEFFECT_GOOGLE_CLIENT_SECRET=\"your-client-secret\"");
+            println!("\nYou can get these from the Google Cloud Console:");
+            println!("  https://console.cloud.google.com/apis/credentials");
+            println!("\nMake sure to:");
+            println!("  1. Create an OAuth 2.0 Client ID (Desktop app type)");
+            println!("  2. Add http://localhost:8085/oauth/callback as a redirect URI");
+            println!("  3. Enable Gmail API and Google Calendar API\n");
+        } else {
+            println!("{{\"success\": false, \"error\": \"OAuth credentials not configured\"}}");
+        }
+        return Ok(());
+    }
+
+    if human {
+        println!("\n🔐 Re-authenticating account: {}", email);
+        println!("   Opening browser for Google authentication...\n");
+    }
+
+    let oauth = OAuthManager::new(token_provider.clone());
+    let state = format!("groundeffect_reauth_{}", uuid::Uuid::new_v4());
+    let auth_url = oauth.authorization_url(&state);
+
+    if human {
+        println!("If the browser doesn't open, visit this URL manually:");
+        println!("{}\n", auth_url);
+    }
+
+    if let Err(e) = open::that(&auth_url) {
+        if human {
+            println!("Failed to open browser: {}", e);
+        }
+    }
+
+    // Start local HTTP server to receive callback
+    let listener = TcpListener::bind("127.0.0.1:8085").await?;
+    if human {
+        println!("⏳ Waiting for authentication callback on http://localhost:8085 ...\n");
+    }
+
+    // Accept one connection with timeout
+    let callback_result = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        async {
+            let (mut socket, _) = listener.accept().await?;
+            let mut reader = BufReader::new(&mut socket);
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).await?;
+
+            // Parse callback
+            let (code, received_state) = parse_oauth_callback(&request_line)?;
+
+            if received_state != state {
+                let response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n<h1>Error: Invalid state</h1>";
+                socket.write_all(response.as_bytes()).await?;
+                anyhow::bail!("OAuth state mismatch - possible CSRF attack");
+            }
+
+            // Send success response
+            let success_html = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
+                <!DOCTYPE html><html><body style='font-family: sans-serif; padding: 40px; text-align: center;'>\
+                <h1>Authentication Successful!</h1><p>You can close this window.</p></body></html>";
+            socket.write_all(success_html.as_bytes()).await?;
+
+            Ok::<String, anyhow::Error>(code)
+        }
+    ).await;
+
+    let code = match callback_result {
+        Ok(Ok(code)) => code,
+        Ok(Err(e)) => {
+            if human {
+                println!("❌ OAuth error: {}", e);
+            } else {
+                println!("{{\"success\": false, \"error\": \"{}\"}}", e);
+            }
+            return Ok(());
+        }
+        Err(_) => {
+            if human {
+                println!("❌ OAuth timeout: no callback received within 5 minutes");
+            } else {
+                println!("{{\"success\": false, \"error\": \"OAuth timeout\"}}");
+            }
+            return Ok(());
+        }
+    };
+
+    if human {
+        println!("✅ Received authorization code, exchanging for tokens...\n");
+    }
+
+    // Exchange code for tokens
+    let (tokens, user_info) = oauth.exchange_code(&code).await?;
+
+    if user_info.email != email {
+        if human {
+            println!("❌ Authenticated as {}, expected {}", user_info.email, email);
+            println!("Please retry and select the correct Google account.");
+        } else {
+            println!("{{\"success\": false, \"error\": \"Authenticated as {} but expected {}\"}}", user_info.email, email);
+        }
+        return Ok(());
+    }
+
+    token_provider.store_tokens(&email, &tokens).await?;
+
+    if let Some(mut existing) = db.get_account(&email).await? {
+        existing.status = AccountStatus::Active;
+        if let Some(name) = user_info.name {
+            if !name.trim().is_empty() {
+                existing.display_name = name;
+            }
+        }
+        db.upsert_account(&existing).await?;
+    }
+
+    if human {
+        println!("🎉 Re-authenticated account: {}", email);
+    } else {
+        println!("{{\"success\": true, \"account\": \"{}\", \"status\": \"active\"}}", email);
+    }
+
+    Ok(())
+}
+
 fn parse_oauth_callback(request_line: &str) -> Result<(String, String)> {
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
@@ -3180,8 +3378,28 @@ async fn handle_config_command(command: ConfigCommands) -> Result<()> {
     match command {
         ConfigCommands::AddPermissions => config_add_permissions().await,
         ConfigCommands::RemovePermissions => config_remove_permissions().await,
-        ConfigCommands::Settings { logging, email_interval, calendar_interval, max_fetches, timezone, human } => {
-            config_settings(logging, email_interval, calendar_interval, max_fetches, timezone, human).await
+        ConfigCommands::Settings {
+            logging,
+            email_interval,
+            calendar_interval,
+            max_fetches,
+            timezone,
+            embedding_provider,
+            openrouter_model,
+            openrouter_api_key_env,
+            human,
+        } => {
+            config_settings(
+                logging,
+                email_interval,
+                calendar_interval,
+                max_fetches,
+                timezone,
+                embedding_provider,
+                openrouter_model,
+                openrouter_api_key_env,
+                human,
+            ).await
         }
     }
 }
@@ -4147,6 +4365,9 @@ async fn config_settings(
     calendar_interval: Option<u64>,
     max_fetches: Option<u32>,
     timezone: Option<String>,
+    embedding_provider: Option<String>,
+    openrouter_model: Option<String>,
+    openrouter_api_key_env: Option<String>,
     human: bool,
 ) -> Result<()> {
     let mut daemon_config = DaemonConfig::load().unwrap_or_default();
@@ -4203,6 +4424,53 @@ async fn config_settings(
         }
     }
 
+    // Apply search config changes
+    let mut search_config_changed = false;
+    if let Some(provider) = embedding_provider {
+        let normalized = provider.trim().to_lowercase();
+        let parsed = match normalized.as_str() {
+            "local" => EmbeddingProvider::Local,
+            "openrouter" => EmbeddingProvider::OpenRouter,
+            "remote" => EmbeddingProvider::Remote,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Invalid embedding provider '{}'. Use: local, openrouter, remote.",
+                    provider
+                ));
+            }
+        };
+
+        if config.search.embedding_provider != Some(parsed) {
+            config.search.embedding_provider = Some(parsed);
+            changes.push(format!("embedding_provider: {}", normalized));
+            search_config_changed = true;
+        }
+    }
+
+    if let Some(model) = openrouter_model {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow::anyhow!("openrouter_model cannot be empty"));
+        }
+        if config.search.openrouter_model != trimmed {
+            config.search.openrouter_model = trimmed.to_string();
+            changes.push(format!("openrouter_model: {}", trimmed));
+            search_config_changed = true;
+        }
+    }
+
+    if let Some(env_name) = openrouter_api_key_env {
+        let trimmed = env_name.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow::anyhow!("openrouter_api_key_env cannot be empty"));
+        }
+        if config.search.openrouter_api_key_env != trimmed {
+            config.search.openrouter_api_key_env = trimmed.to_string();
+            changes.push(format!("openrouter_api_key_env: {}", trimmed));
+            search_config_changed = true;
+        }
+    }
+
     // Save configs if changes were made
     let daemon_config_changed = changes.iter().any(|c|
         c.starts_with("logging") || c.starts_with("email_poll") ||
@@ -4211,19 +4479,37 @@ async fn config_settings(
     if daemon_config_changed {
         daemon_config.save()?;
     }
-    if general_config_changed {
+    if general_config_changed || search_config_changed {
         config.save()?;
     }
 
     if human {
+        let provider = config.search.effective_embedding_provider();
+        let provider_label = match provider {
+            EmbeddingProvider::Local => "local",
+            EmbeddingProvider::OpenRouter => "openrouter",
+            EmbeddingProvider::Remote => "remote",
+        };
         println!("\n⚙️  Settings");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         println!("Timezone: {}", config.general.timezone);
+        println!("Embedding provider: {}", provider_label);
+        if provider == EmbeddingProvider::OpenRouter {
+            println!("OpenRouter model: {}", config.search.openrouter_model);
+            println!("OpenRouter API key env: {}", config.search.openrouter_api_key_env);
+        } else if provider == EmbeddingProvider::Remote {
+            println!("Remote embedding URL: {}", config.search.embedding_url.as_deref().unwrap_or("(unset)"));
+        }
         println!("Logging enabled: {}", daemon_config.logging_enabled);
         println!("Email poll interval: {} seconds", daemon_config.email_poll_interval_secs);
         println!("Calendar poll interval: {} seconds", daemon_config.calendar_poll_interval_secs);
         println!("Max concurrent fetches: {}", daemon_config.max_concurrent_fetches);
         println!("\nDaemon config: {:?}", DaemonConfig::config_path());
+        println!("Config file: {:?}", dirs::home_dir()
+            .unwrap_or_default()
+            .join(".config")
+            .join("groundeffect")
+            .join("config.toml"));
 
         if !changes.is_empty() {
             println!("\nChanges made:");
@@ -4233,9 +4519,19 @@ async fn config_settings(
             println!("\nRestart the daemon for changes to take effect.");
         }
     } else {
+        let provider = config.search.effective_embedding_provider();
+        let provider_label = match provider {
+            EmbeddingProvider::Local => "local",
+            EmbeddingProvider::OpenRouter => "openrouter",
+            EmbeddingProvider::Remote => "remote",
+        };
         println!("{}", serde_json::to_string_pretty(&serde_json::json!({
             "settings": {
                 "timezone": config.general.timezone,
+                "embedding_provider": provider_label,
+                "openrouter_model": config.search.openrouter_model,
+                "openrouter_api_key_env": config.search.openrouter_api_key_env,
+                "embedding_url": config.search.embedding_url,
                 "logging_enabled": daemon_config.logging_enabled,
                 "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
                 "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,

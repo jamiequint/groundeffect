@@ -444,7 +444,7 @@ async fn run_daemon() -> Result<()> {
 
     // Initialize embedding engine with hybrid remote/local support
     // Skip loading local model if using remote with BM25 fallback (saves CPU/memory)
-    let local_embedding = if config.search.embedding_url.is_some()
+    let local_embedding = if config.search.remote_embeddings_enabled()
         && config.search.embedding_fallback == EmbeddingFallback::Bm25
     {
         info!("Skipping local embedding model (using remote with BM25 fallback)");
@@ -461,11 +461,9 @@ async fn run_daemon() -> Result<()> {
                 })?,
         ))
     };
-    let embedding = Arc::new(HybridEmbeddingProvider::new(
+    let embedding = Arc::new(HybridEmbeddingProvider::from_search_config(
         local_embedding,
-        config.search.embedding_url.clone(),
-        config.search.embedding_timeout_ms,
-        config.search.embedding_fallback,
+        &config.search,
     )?);
 
     // Initialize token provider and OAuth manager
@@ -761,7 +759,7 @@ async fn run_mcp_server() -> Result<()> {
 
     // Initialize embedding engine with hybrid remote/local support
     // Skip loading local model if using remote with BM25 fallback (saves CPU/memory)
-    let local_embedding = if config.search.embedding_url.is_some()
+    let local_embedding = if config.search.remote_embeddings_enabled()
         && config.search.embedding_fallback == EmbeddingFallback::Bm25
     {
         None
@@ -774,11 +772,9 @@ async fn run_mcp_server() -> Result<()> {
             config.search.use_gpu,
         )?))
     };
-    let embedding = Arc::new(HybridEmbeddingProvider::new(
+    let embedding = Arc::new(HybridEmbeddingProvider::from_search_config(
         local_embedding,
-        config.search.embedding_url.clone(),
-        config.search.embedding_timeout_ms,
-        config.search.embedding_fallback,
+        &config.search,
     )?);
 
     // Initialize token provider and OAuth manager
