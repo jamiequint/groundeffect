@@ -412,6 +412,18 @@ struct OpenRouterEmbedResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct OpenRouterErrorResponse {
+    error: OpenRouterErrorBody,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenRouterErrorBody {
+    message: String,
+    #[serde(default)]
+    code: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
 struct OpenRouterEmbedItem {
     embedding: Vec<f32>,
     index: usize,
@@ -419,6 +431,7 @@ struct OpenRouterEmbedItem {
 
 const OPENROUTER_MAX_ATTEMPTS: usize = 2;
 const OPENROUTER_LOG_PREVIEW_CHARS: usize = 400;
+const OPENROUTER_MAX_INPUT_CHARS: usize = 12_000;
 
 #[derive(Debug)]
 enum RemoteEmbeddingKind {
@@ -520,106 +533,7 @@ impl RemoteEmbeddingClient {
                 Ok(Self::fit_embeddings(result.embeddings))
             }
             RemoteEmbeddingKind::OpenRouter { api_key, model } => {
-                let request = OpenRouterEmbedRequest {
-                    model: model.clone(),
-                    input: texts.to_vec(),
-                    encoding_format: "float".to_string(),
-                };
-                let endpoint = format!("{}/embeddings", self.url.trim_end_matches('/'));
-                let mut last_error = None;
-
-                for attempt in 1..=OPENROUTER_MAX_ATTEMPTS {
-                    let response = match self
-                        .client
-                        .post(&endpoint)
-                        .header(reqwest::header::ACCEPT_ENCODING, "identity")
-                        .bearer_auth(api_key)
-                        .json(&request)
-                        .send()
-                    {
-                        Ok(resp) => resp,
-                        Err(e) => {
-                            let msg = format!("OpenRouter embedding request failed: {}", e);
-                            if attempt < OPENROUTER_MAX_ATTEMPTS {
-                                warn!("{} (attempt {}/{})", msg, attempt, OPENROUTER_MAX_ATTEMPTS);
-                                last_error = Some(msg);
-                                continue;
-                            }
-                            return Err(Error::Embedding(msg));
-                        }
-                    };
-
-                    let status = response.status();
-                    let content_encoding = response
-                        .headers()
-                        .get(reqwest::header::CONTENT_ENCODING)
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or("identity")
-                        .to_string();
-
-                    let body = match response.bytes() {
-                        Ok(bytes) => bytes,
-                        Err(e) => {
-                            let msg = format!(
-                                "Failed to decode OpenRouter response body (content-encoding={}): {}",
-                                content_encoding, e
-                            );
-                            if attempt < OPENROUTER_MAX_ATTEMPTS {
-                                warn!("{} (attempt {}/{})", msg, attempt, OPENROUTER_MAX_ATTEMPTS);
-                                last_error = Some(msg);
-                                continue;
-                            }
-                            return Err(Error::Embedding(msg));
-                        }
-                    };
-
-                    if !status.is_success() {
-                        let body_preview = Self::truncate_for_log(&String::from_utf8_lossy(&body));
-                        return Err(Error::Embedding(format!(
-                            "OpenRouter returned {}: {}",
-                            status, body_preview
-                        )));
-                    }
-
-                    let embeddings = match Self::parse_openrouter_embeddings(&body) {
-                        Ok(embeddings) => embeddings,
-                        Err(e) => {
-                            let msg = e.to_string();
-                            if attempt < OPENROUTER_MAX_ATTEMPTS {
-                                warn!("{} (attempt {}/{})", msg, attempt, OPENROUTER_MAX_ATTEMPTS);
-                                last_error = Some(msg);
-                                continue;
-                            }
-                            return Err(e);
-                        }
-                    };
-
-                    if embeddings.len() != texts.len() {
-                        let msg = format!(
-                            "OpenRouter returned {} embeddings for {} inputs",
-                            embeddings.len(),
-                            texts.len()
-                        );
-                        if attempt < OPENROUTER_MAX_ATTEMPTS {
-                            warn!("{} (attempt {}/{})", msg, attempt, OPENROUTER_MAX_ATTEMPTS);
-                            last_error = Some(msg);
-                            continue;
-                        }
-                        return Err(Error::Embedding(msg));
-                    }
-
-                    debug!(
-                        "Received {} embeddings from OpenRouter model {}",
-                        embeddings.len(),
-                        model
-                    );
-
-                    return Ok(Self::fit_embeddings(embeddings));
-                }
-
-                Err(Error::Embedding(
-                    last_error.unwrap_or_else(|| "OpenRouter embedding request failed".to_string()),
-                ))
+                self.embed_openrouter_batch(api_key, model, texts)
             }
         }
     }
@@ -669,17 +583,199 @@ impl RemoteEmbeddingClient {
     }
 
     fn parse_openrouter_embeddings(body: &[u8]) -> Result<Vec<Vec<f32>>> {
-        let mut result: OpenRouterEmbedResponse = serde_json::from_slice(body).map_err(|e| {
-            let preview = Self::truncate_for_log(&String::from_utf8_lossy(body));
-            Error::Embedding(format!(
-                "Failed to parse OpenRouter response JSON: {}. Body preview: {}",
-                e, preview
-            ))
-        })?;
+        if let Ok(mut result) = serde_json::from_slice::<OpenRouterEmbedResponse>(body) {
+            // Keep the same order as input.
+            result.data.sort_by_key(|item| item.index);
+            return Ok(result.data.into_iter().map(|item| item.embedding).collect());
+        }
 
-        // Keep the same order as input.
-        result.data.sort_by_key(|item| item.index);
-        Ok(result.data.into_iter().map(|item| item.embedding).collect())
+        if let Ok(err) = serde_json::from_slice::<OpenRouterErrorResponse>(body) {
+            let code = err
+                .error
+                .code
+                .as_ref()
+                .map(std::string::ToString::to_string)
+                .unwrap_or_else(|| "unknown".to_string());
+            return Err(Error::Embedding(format!(
+                "OpenRouter error (code={}): {}",
+                code, err.error.message
+            )));
+        }
+
+        let parse_error = serde_json::from_slice::<OpenRouterEmbedResponse>(body).unwrap_err();
+        let preview = Self::truncate_for_log(&String::from_utf8_lossy(body));
+        Err(Error::Embedding(format!(
+            "Failed to parse OpenRouter response JSON: {}. Body preview: {}",
+            parse_error, preview
+        )))
+    }
+
+    fn sanitize_openrouter_inputs(texts: &[String]) -> (Vec<String>, usize) {
+        let mut truncated = 0usize;
+        let sanitized = texts
+            .iter()
+            .map(|text| {
+                let char_count = text.chars().count();
+                if char_count > OPENROUTER_MAX_INPUT_CHARS {
+                    truncated += 1;
+                    text.chars().take(OPENROUTER_MAX_INPUT_CHARS).collect::<String>()
+                } else {
+                    text.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        (sanitized, truncated)
+    }
+
+    fn request_openrouter_embeddings(
+        &self,
+        api_key: &str,
+        model: &str,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>> {
+        let request = OpenRouterEmbedRequest {
+            model: model.to_string(),
+            input: texts.to_vec(),
+            encoding_format: "float".to_string(),
+        };
+        let endpoint = format!("{}/embeddings", self.url.trim_end_matches('/'));
+        let mut last_error = None;
+
+        for attempt in 1..=OPENROUTER_MAX_ATTEMPTS {
+            let response = match self
+                .client
+                .post(&endpoint)
+                .header(reqwest::header::ACCEPT_ENCODING, "identity")
+                .bearer_auth(api_key)
+                .json(&request)
+                .send()
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let msg = format!("OpenRouter embedding request failed: {}", e);
+                    if attempt < OPENROUTER_MAX_ATTEMPTS {
+                        warn!("{} (attempt {}/{})", msg, attempt, OPENROUTER_MAX_ATTEMPTS);
+                        last_error = Some(msg);
+                        continue;
+                    }
+                    return Err(Error::Embedding(msg));
+                }
+            };
+
+            let status = response.status();
+            let content_encoding = response
+                .headers()
+                .get(reqwest::header::CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("identity")
+                .to_string();
+
+            let body = match response.bytes() {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    let msg = format!(
+                        "Failed to decode OpenRouter response body (content-encoding={}): {}",
+                        content_encoding, e
+                    );
+                    if attempt < OPENROUTER_MAX_ATTEMPTS {
+                        warn!("{} (attempt {}/{})", msg, attempt, OPENROUTER_MAX_ATTEMPTS);
+                        last_error = Some(msg);
+                        continue;
+                    }
+                    return Err(Error::Embedding(msg));
+                }
+            };
+
+            if !status.is_success() {
+                let body_preview = Self::truncate_for_log(&String::from_utf8_lossy(&body));
+                return Err(Error::Embedding(format!(
+                    "OpenRouter returned {}: {}",
+                    status, body_preview
+                )));
+            }
+
+            let embeddings = match Self::parse_openrouter_embeddings(&body) {
+                Ok(embeddings) => embeddings,
+                Err(e) => {
+                    let msg = e.to_string();
+                    if attempt < OPENROUTER_MAX_ATTEMPTS {
+                        warn!("{} (attempt {}/{})", msg, attempt, OPENROUTER_MAX_ATTEMPTS);
+                        last_error = Some(msg);
+                        continue;
+                    }
+                    return Err(e);
+                }
+            };
+
+            if embeddings.len() != texts.len() {
+                let msg = format!(
+                    "OpenRouter returned {} embeddings for {} inputs",
+                    embeddings.len(),
+                    texts.len()
+                );
+                if attempt < OPENROUTER_MAX_ATTEMPTS {
+                    warn!("{} (attempt {}/{})", msg, attempt, OPENROUTER_MAX_ATTEMPTS);
+                    last_error = Some(msg);
+                    continue;
+                }
+                return Err(Error::Embedding(msg));
+            }
+
+            return Ok(embeddings);
+        }
+
+        Err(Error::Embedding(
+            last_error.unwrap_or_else(|| "OpenRouter embedding request failed".to_string()),
+        ))
+    }
+
+    fn embed_openrouter_batch(
+        &self,
+        api_key: &str,
+        model: &str,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>> {
+        let (sanitized, truncated) = Self::sanitize_openrouter_inputs(texts);
+        if truncated > 0 {
+            warn!(
+                "Truncated {} OpenRouter embedding inputs to {} chars",
+                truncated, OPENROUTER_MAX_INPUT_CHARS
+            );
+        }
+
+        match self.request_openrouter_embeddings(api_key, model, &sanitized) {
+            Ok(embeddings) => {
+                debug!(
+                    "Received {} embeddings from OpenRouter model {}",
+                    embeddings.len(),
+                    model
+                );
+                Ok(Self::fit_embeddings(embeddings))
+            }
+            Err(err) => {
+                if texts.len() > 1 {
+                    let mid = texts.len() / 2;
+                    warn!(
+                        "OpenRouter batch of {} failed ({}). Splitting into {} + {}",
+                        texts.len(),
+                        err,
+                        mid,
+                        texts.len() - mid
+                    );
+                    let mut left = self.embed_openrouter_batch(api_key, model, &texts[..mid])?;
+                    let right = self.embed_openrouter_batch(api_key, model, &texts[mid..])?;
+                    left.extend(right);
+                    return Ok(left);
+                }
+
+                warn!(
+                    "OpenRouter failed for a single input ({}). Using zero-vector fallback for this item",
+                    err
+                );
+                Ok(vec![vec![0.0; EMBEDDING_DIMENSION]])
+            }
+        }
     }
 }
 
@@ -878,7 +974,7 @@ impl HybridEmbeddingProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::RemoteEmbeddingClient;
+    use super::{RemoteEmbeddingClient, OPENROUTER_MAX_INPUT_CHARS};
 
     #[test]
     fn parse_openrouter_embeddings_preserves_input_order_by_index() {
@@ -904,5 +1000,34 @@ mod tests {
 
         assert!(msg.contains("Failed to parse OpenRouter response JSON"));
         assert!(msg.contains("Body preview"));
+    }
+
+    #[test]
+    fn parse_openrouter_embeddings_surfaces_openrouter_error_payload() {
+        let payload = br#"{
+            "error": {
+                "message": "No successful provider responses.",
+                "code": 404
+            }
+        }"#;
+        let err = RemoteEmbeddingClient::parse_openrouter_embeddings(payload).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(msg.contains("OpenRouter error"));
+        assert!(msg.contains("No successful provider responses."));
+        assert!(msg.contains("404"));
+    }
+
+    #[test]
+    fn sanitize_openrouter_inputs_truncates_oversized_values() {
+        let long = "a".repeat(OPENROUTER_MAX_INPUT_CHARS + 5000);
+        let short = "short".to_string();
+        let inputs = vec![long, short.clone()];
+
+        let (sanitized, truncated) = RemoteEmbeddingClient::sanitize_openrouter_inputs(&inputs);
+        assert_eq!(truncated, 1);
+        assert_eq!(sanitized.len(), 2);
+        assert_eq!(sanitized[0].chars().count(), OPENROUTER_MAX_INPUT_CHARS);
+        assert_eq!(sanitized[1], short);
     }
 }

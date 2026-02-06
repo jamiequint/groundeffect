@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::Attachment;
 
+const SEARCHABLE_BODY_MAX_CHARS: usize = 16_000;
+const SEARCHABLE_BODY_TAIL_CHARS: usize = 2_000;
+
 /// Email address with optional display name
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Address {
@@ -150,6 +153,26 @@ pub struct Email {
 }
 
 impl Email {
+    fn embedding_body_excerpt(body: &str) -> String {
+        let total_chars = body.chars().count();
+        if total_chars <= SEARCHABLE_BODY_MAX_CHARS {
+            return body.to_string();
+        }
+
+        let tail_chars = SEARCHABLE_BODY_TAIL_CHARS.min(total_chars);
+        let head_chars = SEARCHABLE_BODY_MAX_CHARS
+            .saturating_sub(tail_chars)
+            .saturating_sub(32);
+
+        let head: String = body.chars().take(head_chars).collect();
+        let tail: String = body
+            .chars()
+            .skip(total_chars.saturating_sub(tail_chars))
+            .collect();
+
+        format!("{} [truncated] {}", head, tail)
+    }
+
     /// Check if the email has been read
     pub fn is_read(&self) -> bool {
         self.flags.iter().any(|f| f == "\\Seen")
@@ -181,7 +204,7 @@ impl Email {
         text.push_str(". ");
 
         // Body
-        text.push_str(&self.body_plain);
+        text.push_str(&Self::embedding_body_excerpt(&self.body_plain));
 
         // Attachment filenames
         if !self.attachments.is_empty() {
@@ -279,6 +302,25 @@ impl From<&Email> for EmailSummary {
             }).collect(),
             labels: email.labels.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Email, SEARCHABLE_BODY_MAX_CHARS};
+
+    #[test]
+    fn embedding_body_excerpt_keeps_short_body_unchanged() {
+        let body = "short body";
+        assert_eq!(Email::embedding_body_excerpt(body), body);
+    }
+
+    #[test]
+    fn embedding_body_excerpt_truncates_long_body() {
+        let long = "a".repeat(SEARCHABLE_BODY_MAX_CHARS + 5000);
+        let excerpt = Email::embedding_body_excerpt(&long);
+        assert!(excerpt.chars().count() <= SEARCHABLE_BODY_MAX_CHARS);
+        assert!(excerpt.contains("[truncated]"));
     }
 }
 
