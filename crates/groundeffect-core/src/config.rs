@@ -335,6 +335,20 @@ impl Default for SearchConfig {
 }
 
 impl SearchConfig {
+    /// Returns a safe embedding batch size for chunked processing.
+    ///
+    /// `0` is treated as invalid and coerced to `1`.
+    pub fn effective_embedding_batch_size(&self) -> usize {
+        self.embedding_batch_size.max(1)
+    }
+
+    /// Returns the IMAP fetch batch size used during backfill.
+    ///
+    /// Keep this bounded to avoid very large UID fetch payloads.
+    pub fn effective_imap_fetch_batch_size(&self) -> usize {
+        self.effective_embedding_batch_size().min(1024)
+    }
+
     /// Resolve the effective provider, preserving backward compatibility.
     pub fn effective_embedding_provider(&self) -> EmbeddingProvider {
         self.embedding_provider.unwrap_or_else(|| {
@@ -741,5 +755,22 @@ mod tests {
             EmbeddingProvider::Remote
         );
         assert!(config.search.remote_embeddings_enabled());
+    }
+
+    #[test]
+    fn test_effective_batch_sizes_are_sanitized() {
+        let mut config = Config::default();
+
+        config.search.embedding_batch_size = 0;
+        assert_eq!(config.search.effective_embedding_batch_size(), 1);
+        assert_eq!(config.search.effective_imap_fetch_batch_size(), 1);
+
+        config.search.embedding_batch_size = 512;
+        assert_eq!(config.search.effective_embedding_batch_size(), 512);
+        assert_eq!(config.search.effective_imap_fetch_batch_size(), 512);
+
+        config.search.embedding_batch_size = 4096;
+        assert_eq!(config.search.effective_embedding_batch_size(), 4096);
+        assert_eq!(config.search.effective_imap_fetch_batch_size(), 1024);
     }
 }

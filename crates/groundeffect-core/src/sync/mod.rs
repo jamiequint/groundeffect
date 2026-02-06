@@ -358,7 +358,9 @@ impl SyncManager {
                 sync_type: SyncType::Email,
             }).await;
 
-            let batch_size = 256; // Fetch in batches (aligns with embedding batch size of 128)
+            // Keep IMAP fetch size aligned with embedding chunking so larger configured
+            // batches (e.g. 512/1024) are actually used end-to-end.
+            let batch_size = self.config.search.effective_imap_fetch_batch_size();
             let sync_start = std::time::Instant::now();
 
             // State for progress tracking (shared with callback)
@@ -402,7 +404,7 @@ impl SyncManager {
                     let mut successfully_stored = 0;
 
                     // Generate embeddings in batches for performance
-                    let embed_batch_size = self.config.search.embedding_batch_size;
+                    let embed_batch_size = self.config.search.effective_embedding_batch_size();
                     const MAX_EMBED_RETRIES: u32 = 3;
 
                     for embed_chunk in new_emails.chunks(embed_batch_size) {
@@ -652,7 +654,7 @@ impl SyncManager {
             info!("{} new/changed calendar events to process for {}", changed_events.len(), account_id);
 
             // Generate embeddings in batches for performance
-            let batch_size = self.config.search.embedding_batch_size;
+            let batch_size = self.config.search.effective_embedding_batch_size();
             let total = changed_events.len();
             let mut processed = 0;
 
@@ -852,7 +854,7 @@ impl SyncManager {
                         info!("Incremental sync: found {} new emails for {}", emails.len(), account_id);
 
                         // Batch embed and insert for performance
-                        let embed_batch_size = self.config.search.embedding_batch_size;
+                        let embed_batch_size = self.config.search.effective_embedding_batch_size();
                         for chunk in emails.chunks(embed_batch_size) {
                             let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
 

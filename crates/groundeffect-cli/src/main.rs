@@ -1162,6 +1162,7 @@ CONFIGURABLE SETTINGS:
   --max-fetches <num>        Max concurrent fetches (1-50)
   --timezone <tz>            User timezone (e.g., America/Los_Angeles, UTC)
   --embedding-provider <p>   Embedding backend: local | openrouter | remote
+  --embedding-batch-size <n> Embedding + IMAP fetch batch size (1-1024)
   --openrouter-model <id>    OpenRouter embedding model (when provider=openrouter)
   --openrouter-api-key-env <name>
                              Env var name containing OpenRouter API key
@@ -1185,6 +1186,9 @@ EXAMPLES:
   # Use OpenRouter embeddings
   groundeffect config settings --embedding-provider openrouter
 
+  # Increase embedding/fetch batch size
+  groundeffect config settings --embedding-batch-size 512
+
   # Switch back to local embeddings
   groundeffect config settings --embedding-provider local")]
     Settings {
@@ -1206,6 +1210,9 @@ EXAMPLES:
         /// Embedding backend: local, openrouter, or remote
         #[arg(long)]
         embedding_provider: Option<String>,
+        /// Embedding + IMAP fetch batch size (1-1024)
+        #[arg(long)]
+        embedding_batch_size: Option<usize>,
         /// OpenRouter embedding model (e.g., openai/text-embedding-3-small)
         #[arg(long)]
         openrouter_model: Option<String>,
@@ -3385,6 +3392,7 @@ async fn handle_config_command(command: ConfigCommands) -> Result<()> {
             max_fetches,
             timezone,
             embedding_provider,
+            embedding_batch_size,
             openrouter_model,
             openrouter_api_key_env,
             human,
@@ -3396,6 +3404,7 @@ async fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 max_fetches,
                 timezone,
                 embedding_provider,
+                embedding_batch_size,
                 openrouter_model,
                 openrouter_api_key_env,
                 human,
@@ -4366,6 +4375,7 @@ async fn config_settings(
     max_fetches: Option<u32>,
     timezone: Option<String>,
     embedding_provider: Option<String>,
+    embedding_batch_size: Option<usize>,
     openrouter_model: Option<String>,
     openrouter_api_key_env: Option<String>,
     human: bool,
@@ -4447,6 +4457,15 @@ async fn config_settings(
         }
     }
 
+    if let Some(batch_size) = embedding_batch_size {
+        let clamped = batch_size.clamp(1, 1024);
+        if config.search.embedding_batch_size != clamped {
+            config.search.embedding_batch_size = clamped;
+            changes.push(format!("embedding_batch_size: {}", clamped));
+            search_config_changed = true;
+        }
+    }
+
     if let Some(model) = openrouter_model {
         let trimmed = model.trim();
         if trimmed.is_empty() {
@@ -4494,6 +4513,11 @@ async fn config_settings(
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         println!("Timezone: {}", config.general.timezone);
         println!("Embedding provider: {}", provider_label);
+        println!(
+            "Embedding batch size: {} (IMAP fetch: {})",
+            config.search.effective_embedding_batch_size(),
+            config.search.effective_imap_fetch_batch_size()
+        );
         if provider == EmbeddingProvider::OpenRouter {
             println!("OpenRouter model: {}", config.search.openrouter_model);
             println!("OpenRouter API key env: {}", config.search.openrouter_api_key_env);
@@ -4529,6 +4553,8 @@ async fn config_settings(
             "settings": {
                 "timezone": config.general.timezone,
                 "embedding_provider": provider_label,
+                "embedding_batch_size": config.search.effective_embedding_batch_size(),
+                "imap_fetch_batch_size": config.search.effective_imap_fetch_batch_size(),
                 "openrouter_model": config.search.openrouter_model,
                 "openrouter_api_key_env": config.search.openrouter_api_key_env,
                 "embedding_url": config.search.embedding_url,

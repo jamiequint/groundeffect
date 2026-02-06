@@ -19,6 +19,7 @@ groundeffect config settings [options]
 | `--max-fetches <num>` | Max concurrent fetches (1-50) | 10 |
 | `--timezone <tz>` | Timezone (e.g., America/Los_Angeles, UTC) | Current value |
 | `--embedding-provider <p>` | Embedding backend: local/openrouter/remote | local |
+| `--embedding-batch-size <n>` | Embedding + IMAP fetch batch size (1-1024) | 1 |
 | `--openrouter-model <id>` | OpenRouter model ID | openai/text-embedding-3-small |
 | `--openrouter-api-key-env <name>` | Env var holding OpenRouter API key | OPENROUTER_API_KEY |
 | `--human` | Human-readable output | |
@@ -29,6 +30,8 @@ groundeffect config settings [options]
 - `settings.calendar_poll_interval_secs` - Calendar sync interval
 - `settings.max_concurrent_fetches` - Max parallel connections
 - `settings.embedding_provider` - Active embedding backend
+- `settings.embedding_batch_size` - Active embedding batch size
+- `settings.imap_fetch_batch_size` - IMAP fetch batch size derived from embedding batch size
 - `settings.openrouter_model` - OpenRouter model (if configured)
 - `settings.openrouter_api_key_env` - Env var for OpenRouter key
 - `daemon_config_path` - Path to daemon config file
@@ -56,6 +59,9 @@ groundeffect config settings --logging true --email-interval 300 --max-fetches 1
 
 # Use OpenRouter embeddings
 groundeffect config settings --embedding-provider openrouter
+
+# Increase embedding/fetch batching for faster backfills
+groundeffect config settings --embedding-batch-size 512
 
 # Human-readable output
 groundeffect config settings --human

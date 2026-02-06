@@ -217,6 +217,9 @@ impl ImapClient {
         F: FnMut(Vec<Email>) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
+        // Avoid panic in slice chunking if config is set to 0.
+        let batch_size = batch_size.max(1);
+
         // Connect with retry
         let mut session = self.connect_with_retry().await?;
 
