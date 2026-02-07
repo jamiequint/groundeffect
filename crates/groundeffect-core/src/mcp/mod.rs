@@ -3,12 +3,12 @@
 //! Provides stdio JSON-RPC interface for Claude Code integration.
 
 mod protocol;
-mod tools;
 mod resources;
+mod tools;
 
 pub use protocol::*;
-pub use tools::*;
 pub use resources::*;
+pub use tools::*;
 
 use std::sync::Arc;
 
@@ -151,10 +151,7 @@ impl McpServer {
             // Resource reading
             "resources/read" => self.handle_resources_read(&request.params).await,
 
-            _ => Err(Error::McpProtocol(format!(
-                "Unknown method: {}",
-                method
-            ))),
+            _ => Err(Error::McpProtocol(format!("Unknown method: {}", method))),
         };
 
         let elapsed = start.elapsed();
@@ -174,7 +171,7 @@ impl McpServer {
                     result: Some(value),
                     error: None,
                 }
-            },
+            }
             Err(e) => {
                 error!("← {} ERROR ({}ms): {}", request_desc, elapsed_ms, e);
                 JsonRpcResponse {
@@ -190,7 +187,7 @@ impl McpServer {
                         })),
                     }),
                 }
-            },
+            }
         }
     }
 
@@ -229,7 +226,10 @@ impl McpServer {
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing tool name".to_string()))?;
 
-        let arguments = params.get("arguments").cloned().unwrap_or(Value::Object(Default::default()));
+        let arguments = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or(Value::Object(Default::default()));
 
         let tool_handler = ToolHandler::new(
             self.db.clone(),

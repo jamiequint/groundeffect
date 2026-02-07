@@ -34,7 +34,8 @@ struct AttendeeDetail {
 #[derive(Parser)]
 #[command(name = "groundeffect")]
 #[command(about = "GroundEffect - Local email and calendar sync with semantic search")]
-#[command(long_about = "GroundEffect syncs Gmail and Google Calendar to a local database with full-text \
+#[command(
+    long_about = "GroundEffect syncs Gmail and Google Calendar to a local database with full-text \
 and semantic (vector) search capabilities. Data is stored locally in LanceDB.
 
 QUICK START:
@@ -72,7 +73,8 @@ EXAMPLES:
   groundeffect email search \"budget report\" --from finance@company.com --after 2024-01-01
   groundeffect calendar search \"team meeting\" --after 2024-06-01 --limit 20
   groundeffect account show user@gmail.com
-  groundeffect sync status")]
+  groundeffect sync status"
+)]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -126,7 +128,8 @@ enum EmailCommands {
     /// Search emails using hybrid BM25 + vector semantic search.
     /// Returns JSON array with: id, from, to, subject, date, snippet, account_id, score.
     /// Use the 'id' field with 'email show' to get full email body.
-    #[command(long_about = "Search emails using hybrid BM25 + semantic vector search.
+    #[command(
+        long_about = "Search emails using hybrid BM25 + semantic vector search.
 
 Returns JSON array of matching emails, sorted by relevance score.
 
@@ -148,7 +151,8 @@ SEARCH TIPS:
 EXAMPLES:
   groundeffect email search \"quarterly budget\"
   groundeffect email search \"project status\" --from manager@company.com
-  groundeffect email search \"invoice\" --after 2024-01-01 --has-attachment")]
+  groundeffect email search \"invoice\" --after 2024-01-01 --has-attachment"
+    )]
     Search {
         /// Natural language search query. Uses semantic search - finds conceptually similar content.
         query: String,
@@ -299,7 +303,8 @@ EXAMPLES:
     },
     /// Get an email attachment content or path.
     /// Returns JSON: {filename, mime_type, size, content?|path?, downloaded}.
-    #[command(long_about = "Get an email attachment by email ID and filename or attachment ID.
+    #[command(
+        long_about = "Get an email attachment by email ID and filename or attachment ID.
 
 If the attachment has been downloaded, returns the local file path (for binary files)
 or the content directly (for text files like .txt, .csv, .json, etc).
@@ -316,7 +321,8 @@ OPTIONAL PARAMETERS (one required):
 
 EXAMPLES:
   groundeffect email attachment 18abc123 --filename report.pdf
-  groundeffect email attachment 18abc123 --attachment-id att_456")]
+  groundeffect email attachment 18abc123 --attachment-id att_456"
+    )]
     Attachment {
         /// Email ID containing the attachment
         email_id: String,
@@ -594,7 +600,8 @@ EXAMPLES:
     },
     /// List calendar events in a date range (no search query required).
     /// Returns JSON array with: id, summary, start, end, location, account_id, calendar_id.
-    #[command(long_about = "List calendar events in a date range without semantic search.
+    #[command(
+        long_about = "List calendar events in a date range without semantic search.
 
 Use this command to answer questions like 'what's on my calendar tomorrow' or
 'show me my meetings next week'. Unlike 'calendar search', this command does NOT
@@ -625,7 +632,8 @@ EXAMPLES:
   groundeffect calendar events --from 2024-01-07 --account work@example.com
 
   # Today's events (default)
-  groundeffect calendar events")]
+  groundeffect calendar events"
+    )]
     Events {
         /// Start date (YYYY-MM-DD). Defaults to today if not specified.
         #[arg(long)]
@@ -720,7 +728,8 @@ enum AccountCommands {
     /// Returns: email, alias, display_name, status, added_at, email_count, event_count,
     /// attachments_total, attachments_downloaded, attachments_size_bytes, last_sync_email,
     /// last_sync_calendar, sync_email_since, sync_attachments.
-    #[command(long_about = "Show detailed account information including sync configuration.
+    #[command(
+        long_about = "Show detailed account information including sync configuration.
 
 RESPONSE FIELDS:
   email                   - Account email address (primary identifier)
@@ -739,7 +748,8 @@ RESPONSE FIELDS:
   sync_attachments        - Whether attachment auto-download is enabled (boolean)
 
 NOTE: sync_email_since is the configured cutoff - emails older than this are not synced.
-Use 'sync status' to see oldest_email which shows the actual oldest email in database.")]
+Use 'sync status' to see oldest_email which shows the actual oldest email in database."
+    )]
     Show {
         /// Account email address or alias
         account: String,
@@ -868,7 +878,8 @@ EXAMPLES:
 enum SyncCommands {
     /// Show sync status for all accounts or a specific account.
     /// Returns JSON array with comprehensive sync information.
-    #[command(long_about = "Show detailed sync status including email/event counts and date ranges.
+    #[command(
+        long_about = "Show detailed sync status including email/event counts and date ranges.
 
 RESPONSE FIELDS:
   account               - Account email address
@@ -894,7 +905,8 @@ IMPORTANT:
 
 EXAMPLES:
   groundeffect sync status
-  groundeffect sync status --account user@gmail.com")]
+  groundeffect sync status --account user@gmail.com"
+    )]
     Status {
         /// Filter to specific account by email address
         #[arg(long)]
@@ -1059,7 +1071,8 @@ enum DaemonCommands {
     },
     /// Install launchd agent for auto-start at login. Uses smart defaults (no prompts).
     /// Returns JSON: {status: "installed"|"already_installed"|"error"}.
-    #[command(long_about = "Install the launchd agent for automatic daemon startup at login.
+    #[command(
+        long_about = "Install the launchd agent for automatic daemon startup at login.
 
 Uses sensible defaults:
   - Logging: disabled (logs to ~/.local/share/groundeffect/logs/ when enabled)
@@ -1079,7 +1092,8 @@ TO CUSTOMIZE SETTINGS:
 EXAMPLES:
   groundeffect daemon install
   groundeffect daemon install --logging true
-  groundeffect daemon install --logging false")]
+  groundeffect daemon install --logging false"
+    )]
     Install {
         /// Enable file logging to ~/.local/share/groundeffect/logs/
         /// If not specified, preserves existing config or defaults to false.
@@ -1091,7 +1105,8 @@ EXAMPLES:
     },
     /// Uninstall launchd agent. Stops the daemon and removes auto-start.
     /// Returns JSON: {status: "uninstalled"|"not_installed"}.
-    #[command(long_about = "Uninstall the launchd agent and stop automatic daemon startup.
+    #[command(
+        long_about = "Uninstall the launchd agent and stop automatic daemon startup.
 
 This will:
   1. Stop the running daemon (if any)
@@ -1101,7 +1116,8 @@ This will:
 Note: This does NOT remove synced data or configuration files.
 
 EXAMPLES:
-  groundeffect daemon uninstall")]
+  groundeffect daemon uninstall"
+    )]
     Uninstall {
         /// Human-readable output instead of JSON
         #[arg(long)]
@@ -1136,7 +1152,8 @@ without asking for permission on each command.")]
     AddPermissions,
     /// Remove groundeffect from Claude Code's allowed commands.
     #[command(name = "remove-permissions")]
-    #[command(long_about = "Remove groundeffect from Claude Code's command allowlist.
+    #[command(
+        long_about = "Remove groundeffect from Claude Code's command allowlist.
 
 This modifies ~/.claude/settings.json to remove groundeffect from the allowed
 commands, requiring permission prompts again.
@@ -1148,7 +1165,8 @@ FILE MODIFIED:
   ~/.claude/settings.json
 
 EXAMPLE:
-  groundeffect config remove-permissions")]
+  groundeffect config remove-permissions"
+    )]
     RemovePermissions,
     /// View or modify daemon settings interactively.
     #[command(long_about = "View or modify daemon settings.
@@ -1162,7 +1180,7 @@ CONFIGURABLE SETTINGS:
   --max-fetches <num>        Max concurrent fetches (1-50)
   --timezone <tz>            User timezone (e.g., America/Los_Angeles, UTC)
   --embedding-provider <p>   Embedding backend: local | openrouter | remote
-  --embedding-batch-size <n> Embedding + IMAP fetch batch size (1-1024)
+  --embedding-batch-size <n> Embedding + IMAP fetch batch size (1-1024, default 128)
   --openrouter-model <id>    OpenRouter embedding model (when provider=openrouter)
   --openrouter-api-key-env <name>
                              Env var name containing OpenRouter API key
@@ -1186,8 +1204,8 @@ EXAMPLES:
   # Use OpenRouter embeddings
   groundeffect config settings --embedding-provider openrouter
 
-  # Increase embedding/fetch batch size
-  groundeffect config settings --embedding-batch-size 512
+  # Set embedding/fetch batch size (128 recommended for Gmail/OpenRouter stability)
+  groundeffect config settings --embedding-batch-size 128
 
   # Switch back to local embeddings
   groundeffect config settings --embedding-provider local")]
@@ -1210,7 +1228,7 @@ EXAMPLES:
         /// Embedding backend: local, openrouter, or remote
         #[arg(long)]
         embedding_provider: Option<String>,
-        /// Embedding + IMAP fetch batch size (1-1024)
+        /// Embedding + IMAP fetch batch size (1-1024, default 128)
         #[arg(long)]
         embedding_batch_size: Option<usize>,
         /// OpenRouter embedding model (e.g., openai/text-embedding-3-small)
@@ -1310,7 +1328,7 @@ impl EmailDetail {
             date: email.date.to_rfc3339(),
             folder: email.folder.clone(),
             account_id: email.account_id.clone(),
-            body: email.body_plain.clone(),
+            body: email.resolved_body(),
             thread_id: email.gmail_thread_id.to_string(),
             attachments,
         }
@@ -1454,9 +1472,11 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
             } else {
                 let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
                     .unwrap_or(EmbeddingModel::BgeBaseEn);
-                Some(Arc::new(
-                    EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
-                ))
+                Some(Arc::new(EmbeddingEngine::from_cache(
+                    config.models_dir(),
+                    model_type,
+                    config.search.use_gpu,
+                )?))
             };
             let embedding = Arc::new(HybridEmbeddingProvider::from_search_config(
                 local_embedding,
@@ -1472,7 +1492,11 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
                     .iter()
                     .filter_map(|a| resolve_account(&all_accounts, a))
                     .collect();
-                if resolved.is_empty() { None } else { Some(resolved) }
+                if resolved.is_empty() {
+                    None
+                } else {
+                    Some(resolved)
+                }
             } else {
                 None
             };
@@ -1522,7 +1546,11 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
             }
         }
 
-        EmailCommands::List { account, limit, human } => {
+        EmailCommands::List {
+            account,
+            limit,
+            human,
+        } => {
             let human = human || global_human;
             let config = Config::load().unwrap_or_default();
             let db = Database::open(config.lancedb_dir()).await?;
@@ -1534,7 +1562,9 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
                 None
             };
 
-            let emails = db.list_recent_emails(account_id.as_deref(), limit.min(100)).await?;
+            let emails = db
+                .list_recent_emails(account_id.as_deref(), limit.min(100))
+                .await?;
 
             if human {
                 if emails.is_empty() {
@@ -1569,16 +1599,40 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
                         println!("\n📧 {}", email.subject);
                         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
                         println!("From: {}", email.from);
-                        println!("To: {}", email.to.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "));
+                        println!(
+                            "To: {}",
+                            email
+                                .to
+                                .iter()
+                                .map(|a| a.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
                         if !email.cc.is_empty() {
-                            println!("CC: {}", email.cc.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "));
+                            println!(
+                                "CC: {}",
+                                email
+                                    .cc
+                                    .iter()
+                                    .map(|a| a.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
                         }
                         println!("Date: {}", email.date.format("%Y-%m-%d %H:%M:%S"));
                         println!("Folder: {}", email.folder);
                         if !email.attachments.is_empty() {
-                            println!("Attachments: {}", email.attachments.iter().map(|a| a.filename.as_str()).collect::<Vec<_>>().join(", "));
+                            println!(
+                                "Attachments: {}",
+                                email
+                                    .attachments
+                                    .iter()
+                                    .map(|a| a.filename.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
                         }
-                        println!("\n{}", email.body_plain);
+                        println!("\n{}", email.resolved_body());
                     } else {
                         let detail = EmailDetail::from_email(&email);
                         println!("{}", serde_json::to_string_pretty(&detail)?);
@@ -1594,7 +1648,11 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
             }
         }
 
-        EmailCommands::Thread { thread_id, account, human } => {
+        EmailCommands::Thread {
+            thread_id,
+            account,
+            human,
+        } => {
             let human = human || global_human;
             let config = Config::load().unwrap_or_default();
             let db = Database::open(config.lancedb_dir()).await?;
@@ -1604,12 +1662,16 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
 
             let account_id = if let Some(accts) = account {
                 let all_accounts = db.list_accounts().await?;
-                accts.first().and_then(|a| resolve_account(&all_accounts, a))
+                accts
+                    .first()
+                    .and_then(|a| resolve_account(&all_accounts, a))
             } else {
                 None
             };
 
-            let emails = db.get_emails_by_thread(thread_id_num, account_id.as_deref()).await?;
+            let emails = db
+                .get_emails_by_thread(thread_id_num, account_id.as_deref())
+                .await?;
 
             if human {
                 if emails.is_empty() {
@@ -1621,30 +1683,67 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
                         println!("📧 {}", email.subject);
                         println!("From: {}", email.from);
                         println!("Date: {}", email.date.format("%Y-%m-%d %H:%M"));
-                        println!("\n{}\n", email.body_plain.chars().take(500).collect::<String>());
+                        println!(
+                            "\n{}\n",
+                            email.resolved_body().chars().take(500).collect::<String>()
+                        );
                     }
                 }
             } else {
-                let json_results: Vec<EmailDetail> = emails
-                    .iter()
-                    .map(EmailDetail::from_email)
-                    .collect();
+                let json_results: Vec<EmailDetail> =
+                    emails.iter().map(EmailDetail::from_email).collect();
                 println!("{}", serde_json::to_string_pretty(&json_results)?);
             }
         }
 
-        EmailCommands::Send { from, to, subject, body, cc, bcc, reply_to, html, save_as_draft, confirm, human } => {
+        EmailCommands::Send {
+            from,
+            to,
+            subject,
+            body,
+            cc,
+            bcc,
+            reply_to,
+            html,
+            save_as_draft,
+            confirm,
+            human,
+        } => {
             let human = human || global_human;
-            email_send(&from, to, &subject, &body, cc, bcc, reply_to, html, save_as_draft, confirm, human).await?;
+            email_send(
+                &from,
+                to,
+                &subject,
+                &body,
+                cc,
+                bcc,
+                reply_to,
+                html,
+                save_as_draft,
+                confirm,
+                human,
+            )
+            .await?;
         }
 
         EmailCommands::Draft { command } => {
             handle_draft_command(command, global_human).await?;
         }
 
-        EmailCommands::Attachment { email_id, filename, attachment_id, human } => {
+        EmailCommands::Attachment {
+            email_id,
+            filename,
+            attachment_id,
+            human,
+        } => {
             let human = human || global_human;
-            email_attachment(&email_id, filename.as_deref(), attachment_id.as_deref(), human).await?;
+            email_attachment(
+                &email_id,
+                filename.as_deref(),
+                attachment_id.as_deref(),
+                human,
+            )
+            .await?;
         }
 
         EmailCommands::Folders { human } => {
@@ -1666,9 +1765,12 @@ async fn handle_email_command(command: EmailCommands, global_human: bool) -> Res
                     println!("  {}", folder);
                 }
             } else {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "folders": folders
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "folders": folders
+                    }))?
+                );
             }
         }
     }
@@ -1704,9 +1806,11 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
             } else {
                 let model_type = EmbeddingModel::from_str(&config.search.embedding_model)
                     .unwrap_or(EmbeddingModel::BgeBaseEn);
-                Some(Arc::new(
-                    EmbeddingEngine::from_cache(config.models_dir(), model_type, config.search.use_gpu)?
-                ))
+                Some(Arc::new(EmbeddingEngine::from_cache(
+                    config.models_dir(),
+                    model_type,
+                    config.search.use_gpu,
+                )?))
             };
             let embedding = Arc::new(HybridEmbeddingProvider::from_search_config(
                 local_embedding,
@@ -1722,7 +1826,11 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                     .iter()
                     .filter_map(|a| resolve_account(&all_accounts, a))
                     .collect();
-                if resolved.is_empty() { None } else { Some(resolved) }
+                if resolved.is_empty() {
+                    None
+                } else {
+                    Some(resolved)
+                }
             } else {
                 None
             };
@@ -1744,9 +1852,11 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                     println!("\nFound {} events:\n", results.len());
                     for result in &results {
                         println!("📅 {} (score: {:.2})", result.event.summary, result.score);
-                        println!("   When: {} - {}",
+                        println!(
+                            "   When: {} - {}",
                             format_event_time_human(&result.event.start),
-                            format_event_time_human(&result.event.end));
+                            format_event_time_human(&result.event.end)
+                        );
                         if let Some(loc) = &result.event.location {
                             println!("   Where: {}", loc);
                         }
@@ -1807,9 +1917,11 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                     if human {
                         println!("\n📅 {}", event.summary);
                         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-                        println!("When: {} - {}",
+                        println!(
+                            "When: {} - {}",
                             format_event_time_human(&event.start),
-                            format_event_time_human(&event.end));
+                            format_event_time_human(&event.end)
+                        );
                         if let Some(loc) = &event.location {
                             println!("Where: {}", loc);
                         }
@@ -1828,12 +1940,18 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                                         groundeffect_core::models::AttendeeStatus::Accepted => "✓",
                                         groundeffect_core::models::AttendeeStatus::Declined => "✗",
                                         groundeffect_core::models::AttendeeStatus::Tentative => "?",
-                                        groundeffect_core::models::AttendeeStatus::NeedsAction => "?",
+                                        groundeffect_core::models::AttendeeStatus::NeedsAction => {
+                                            "?"
+                                        }
                                     },
                                     None => " ",
                                 };
-                                let optional_suffix = if attendee.optional { " (optional)" } else { "" };
-                                println!("  {} {} <{}>{}", status_icon, name, attendee.email, optional_suffix);
+                                let optional_suffix =
+                                    if attendee.optional { " (optional)" } else { "" };
+                                println!(
+                                    "  {} {} <{}>{}",
+                                    status_icon, name, attendee.email, optional_suffix
+                                );
                             }
                         }
                         // Show description last
@@ -1867,15 +1985,25 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                             organizer: event.organizer.as_ref().map(|o| AttendeeDetail {
                                 email: o.email.clone(),
                                 name: o.name.clone(),
-                                response_status: o.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                                response_status: o
+                                    .response_status
+                                    .as_ref()
+                                    .map(|s| format!("{:?}", s).to_lowercase()),
                                 optional: o.optional,
                             }),
-                            attendees: event.attendees.iter().map(|a| AttendeeDetail {
-                                email: a.email.clone(),
-                                name: a.name.clone(),
-                                response_status: a.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
-                                optional: a.optional,
-                            }).collect(),
+                            attendees: event
+                                .attendees
+                                .iter()
+                                .map(|a| AttendeeDetail {
+                                    email: a.email.clone(),
+                                    name: a.name.clone(),
+                                    response_status: a
+                                        .response_status
+                                        .as_ref()
+                                        .map(|s| format!("{:?}", s).to_lowercase()),
+                                    optional: a.optional,
+                                })
+                                .collect(),
                             account_id: event.account_id.clone(),
                             calendar_id: event.calendar_id.clone(),
                         };
@@ -1892,7 +2020,13 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
             }
         }
 
-        CalendarCommands::Events { from, to, account, limit, human } => {
+        CalendarCommands::Events {
+            from,
+            to,
+            account,
+            limit,
+            human,
+        } => {
             let human = human || global_human;
             let config = Config::load().unwrap_or_default();
             let db = Database::open(config.lancedb_dir()).await?;
@@ -1909,23 +2043,34 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                 None => {
                     let from_parsed = chrono::NaiveDate::parse_from_str(&from_date, "%Y-%m-%d")
                         .unwrap_or_else(|_| chrono::Utc::now().date_naive());
-                    (from_parsed + chrono::Duration::days(7)).format("%Y-%m-%d").to_string()
+                    (from_parsed + chrono::Duration::days(7))
+                        .format("%Y-%m-%d")
+                        .to_string()
                 }
             };
 
-            let accounts_ref = account.as_ref().map(|v| v.iter().map(|s| s.clone()).collect::<Vec<_>>());
-            let events = db.list_events_in_range(
-                accounts_ref.as_deref(),
-                &from_date,
-                &to_date,
-                limit.min(200),
-            ).await?;
+            let accounts_ref = account
+                .as_ref()
+                .map(|v| v.iter().map(|s| s.clone()).collect::<Vec<_>>());
+            let events = db
+                .list_events_in_range(
+                    accounts_ref.as_deref(),
+                    &from_date,
+                    &to_date,
+                    limit.min(200),
+                )
+                .await?;
 
             if human {
                 if events.is_empty() {
                     println!("No events found from {} to {}.", from_date, to_date);
                 } else {
-                    println!("\n📅 Events from {} to {} ({} events)\n", from_date, to_date, events.len());
+                    println!(
+                        "\n📅 Events from {} to {} ({} events)\n",
+                        from_date,
+                        to_date,
+                        events.len()
+                    );
                     let mut current_date = String::new();
                     for event in &events {
                         let event_date = match &event.start {
@@ -1935,7 +2080,9 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                         if event_date != current_date {
                             current_date = event_date.clone();
                             // Parse and format as weekday
-                            if let Ok(d) = chrono::NaiveDate::parse_from_str(&current_date, "%Y-%m-%d") {
+                            if let Ok(d) =
+                                chrono::NaiveDate::parse_from_str(&current_date, "%Y-%m-%d")
+                            {
                                 println!("━━ {} ━━", d.format("%A, %B %e, %Y"));
                             } else {
                                 println!("━━ {} ━━", current_date);
@@ -1999,15 +2146,25 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
                         organizer: e.organizer.as_ref().map(|o| AttendeeDetail {
                             email: o.email.clone(),
                             name: o.name.clone(),
-                            response_status: o.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                            response_status: o
+                                .response_status
+                                .as_ref()
+                                .map(|s| format!("{:?}", s).to_lowercase()),
                             optional: o.optional,
                         }),
-                        attendees: e.attendees.iter().map(|a| AttendeeDetail {
-                            email: a.email.clone(),
-                            name: a.name.clone(),
-                            response_status: a.response_status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
-                            optional: a.optional,
-                        }).collect(),
+                        attendees: e
+                            .attendees
+                            .iter()
+                            .map(|a| AttendeeDetail {
+                                email: a.email.clone(),
+                                name: a.name.clone(),
+                                response_status: a
+                                    .response_status
+                                    .as_ref()
+                                    .map(|s| format!("{:?}", s).to_lowercase()),
+                                optional: a.optional,
+                            })
+                            .collect(),
                         account_id: e.account_id.clone(),
                         calendar_id: e.calendar_id.clone(),
                     })
@@ -2016,9 +2173,30 @@ async fn handle_calendar_command(command: CalendarCommands, global_human: bool) 
             }
         }
 
-        CalendarCommands::Create { account, summary, start, end, description, location, attendees, calendar, human } => {
+        CalendarCommands::Create {
+            account,
+            summary,
+            start,
+            end,
+            description,
+            location,
+            attendees,
+            calendar,
+            human,
+        } => {
             let human = human || global_human;
-            calendar_create(&account, &summary, &start, &end, description.as_deref(), location.as_deref(), attendees, &calendar, human).await?;
+            calendar_create(
+                &account,
+                &summary,
+                &start,
+                &end,
+                description.as_deref(),
+                location.as_deref(),
+                attendees,
+                &calendar,
+                human,
+            )
+            .await?;
         }
     }
 
@@ -2058,7 +2236,11 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
                             AccountStatus::Disabled => "○",
                             AccountStatus::Syncing => "↻",
                         };
-                        let alias = account.alias.as_ref().map(|a| format!(" ({})", a)).unwrap_or_default();
+                        let alias = account
+                            .alias
+                            .as_ref()
+                            .map(|a| format!(" ({})", a))
+                            .unwrap_or_default();
                         println!("{} {}{}", status_icon, account.id, alias);
                         println!("  Status: {:?}", account.status);
                         println!("  Display name: {}", account.display_name);
@@ -2066,10 +2248,8 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
                     }
                 }
             } else {
-                let json_results: Vec<AccountResult> = accounts
-                    .iter()
-                    .map(AccountResult::from_account)
-                    .collect();
+                let json_results: Vec<AccountResult> =
+                    accounts.iter().map(AccountResult::from_account).collect();
                 println!("{}", serde_json::to_string_pretty(&json_results)?);
             }
         }
@@ -2087,7 +2267,8 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
                     if let Some(acct) = db.get_account(&id).await? {
                         let email_count = db.count_emails(Some(&id)).await.unwrap_or(0);
                         let event_count = db.count_events(Some(&id)).await.unwrap_or(0);
-                        let (att_total, att_downloaded, att_size) = db.get_attachment_stats(&id).await.unwrap_or((0, 0, 0));
+                        let (att_total, att_downloaded, att_size) =
+                            db.get_attachment_stats(&id).await.unwrap_or((0, 0, 0));
 
                         if human {
                             println!("\n📧 Account: {}", acct.id);
@@ -2104,11 +2285,21 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
                             } else {
                                 println!("  Sync emails since: (default)");
                             }
-                            println!("  Sync attachments: {}", if acct.sync_attachments { "enabled" } else { "disabled" });
+                            println!(
+                                "  Sync attachments: {}",
+                                if acct.sync_attachments {
+                                    "enabled"
+                                } else {
+                                    "disabled"
+                                }
+                            );
                             println!("\n📊 Stats:");
                             println!("  Emails: {}", email_count);
                             println!("  Events: {}", event_count);
-                            println!("  Attachments: {}/{} downloaded ({} bytes)", att_downloaded, att_total, att_size);
+                            println!(
+                                "  Attachments: {}/{} downloaded ({} bytes)",
+                                att_downloaded, att_total, att_size
+                            );
                             if let Some(last) = acct.last_sync_email {
                                 println!("  Last email sync: {}", last.format("%Y-%m-%d %H:%M"));
                             }
@@ -2163,7 +2354,12 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
             }
         }
 
-        AccountCommands::Add { years, attachments, alias, human } => {
+        AccountCommands::Add {
+            years,
+            attachments,
+            alias,
+            human,
+        } => {
             let human = human || global_human;
             account_add(years, attachments, alias, human).await?;
         }
@@ -2173,12 +2369,22 @@ async fn handle_account_command(command: AccountCommands, global_human: bool) ->
             account_reauth(&account, human).await?;
         }
 
-        AccountCommands::Delete { account, confirm, human } => {
+        AccountCommands::Delete {
+            account,
+            confirm,
+            human,
+        } => {
             let human = human || global_human;
             account_delete(&account, confirm, human).await?;
         }
 
-        AccountCommands::Configure { account, alias, attachments, no_attachments, human } => {
+        AccountCommands::Configure {
+            account,
+            alias,
+            attachments,
+            no_attachments,
+            human,
+        } => {
             let human = human || global_human;
             account_configure(&account, alias, attachments, no_attachments, human).await?;
         }
@@ -2200,7 +2406,10 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
             let accounts = db.list_accounts().await?;
 
             let target_accounts: Vec<&Account> = if let Some(acct) = &account {
-                accounts.iter().filter(|a| a.id == *acct || a.alias.as_ref() == Some(acct)).collect()
+                accounts
+                    .iter()
+                    .filter(|a| a.id == *acct || a.alias.as_ref() == Some(acct))
+                    .collect()
             } else {
                 accounts.iter().collect()
             };
@@ -2232,14 +2441,23 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
             for account in target_accounts {
                 let email_count = db.count_emails(Some(&account.id)).await.unwrap_or(0);
                 let event_count = db.count_events(Some(&account.id)).await.unwrap_or(0);
-                let (oldest_email, newest_email) = db.get_email_sync_boundaries(&account.id).await.unwrap_or((None, None));
-                let (oldest_event, newest_event) = db.get_event_sync_boundaries(&account.id).await.unwrap_or((None, None));
-                let (att_total, att_downloaded, att_size) = db.get_attachment_stats(&account.id).await.unwrap_or((0, 0, 0));
+                let (oldest_email, newest_email) = db
+                    .get_email_sync_boundaries(&account.id)
+                    .await
+                    .unwrap_or((None, None));
+                let (oldest_event, newest_event) = db
+                    .get_event_sync_boundaries(&account.id)
+                    .await
+                    .unwrap_or((None, None));
+                let (att_total, att_downloaded, att_size) = db
+                    .get_attachment_stats(&account.id)
+                    .await
+                    .unwrap_or((0, 0, 0));
 
                 // Calculate remaining emails if we have an estimate
-                let emails_remaining = account.estimated_total_emails.map(|total| {
-                    total.saturating_sub(email_count)
-                });
+                let emails_remaining = account
+                    .estimated_total_emails
+                    .map(|total| total.saturating_sub(email_count));
 
                 let status = SyncStatus {
                     account: account.id.clone(),
@@ -2268,7 +2486,11 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
                         AccountStatus::Disabled => "○",
                         AccountStatus::Syncing => "↻",
                     };
-                    let alias = account.alias.as_ref().map(|a| format!(" ({})", a)).unwrap_or_default();
+                    let alias = account
+                        .alias
+                        .as_ref()
+                        .map(|a| format!(" ({})", a))
+                        .unwrap_or_default();
                     println!("{}  {}{}", status_icon, account.id, alias);
                     println!("   Status: {:?}", account.status);
                     if let Some(since) = account.sync_email_since {
@@ -2278,7 +2500,10 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
                     if let Some(total) = account.estimated_total_emails {
                         let remaining = total.saturating_sub(email_count);
                         if remaining > 0 {
-                            println!("   📨 Emails: {} / {} ({} remaining)", email_count, total, remaining);
+                            println!(
+                                "   📨 Emails: {} / {} ({} remaining)",
+                                email_count, total, remaining
+                            );
                         } else {
                             println!("   📨 Emails: {} (sync complete)", email_count);
                         }
@@ -2304,7 +2529,12 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
                     if let Some(last) = account.last_sync_calendar {
                         println!("      Last sync: {}", format_relative_time(last));
                     }
-                    println!("   📎 Attachments: {}/{} downloaded ({})", att_downloaded, att_total, format_bytes(att_size));
+                    println!(
+                        "   📎 Attachments: {}/{} downloaded ({})",
+                        att_downloaded,
+                        att_total,
+                        format_bytes(att_size)
+                    );
                     if account.sync_attachments {
                         println!("      Auto-download: enabled");
                     }
@@ -2319,17 +2549,30 @@ async fn handle_sync_command(command: SyncCommands, global_human: bool) -> Resul
             }
         }
 
-        SyncCommands::Reset { account, data_type, confirm, human } => {
+        SyncCommands::Reset {
+            account,
+            data_type,
+            confirm,
+            human,
+        } => {
             let human = human || global_human;
             sync_reset(&account, &data_type, confirm, human).await?;
         }
 
-        SyncCommands::Extend { account, target_date, human } => {
+        SyncCommands::Extend {
+            account,
+            target_date,
+            human,
+        } => {
             let human = human || global_human;
             sync_extend(&account, &target_date, human).await?;
         }
 
-        SyncCommands::ResumeFrom { account, target_date, human } => {
+        SyncCommands::ResumeFrom {
+            account,
+            target_date,
+            human,
+        } => {
             let human = human || global_human;
             sync_resume_from(&account, &target_date, human).await?;
         }
@@ -2390,13 +2633,19 @@ async fn handle_daemon_command(command: DaemonCommands, global_human: bool) -> R
                     if output.status.success() {
                         println!("✓ Daemon started via launchd");
                     } else {
-                        println!("Failed to start daemon: {}", String::from_utf8_lossy(&output.stderr));
+                        println!(
+                            "Failed to start daemon: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
                     }
                 } else {
                     if output.status.success() {
                         println!("{{\"status\": \"started\", \"method\": \"launchd\"}}");
                     } else {
-                        println!("{{\"status\": \"error\", \"message\": \"{}\" }}", String::from_utf8_lossy(&output.stderr).replace('"', "\\\""));
+                        println!(
+                            "{{\"status\": \"error\", \"message\": \"{}\" }}",
+                            String::from_utf8_lossy(&output.stderr).replace('"', "\\\"")
+                        );
                     }
                 }
             } else {
@@ -2551,8 +2800,7 @@ fn restart_daemon() -> Option<&'static str> {
             .output();
         Some("launchd")
     } else {
-        let _ = std::process::Command::new("groundeffect-daemon")
-            .spawn();
+        let _ = std::process::Command::new("groundeffect-daemon").spawn();
         Some("direct")
     }
 }
@@ -2630,9 +2878,14 @@ fn daemon_install(logging: Option<bool>, human: bool) -> Result<()> {
     if plist_path.exists() {
         if human {
             println!("Launchd agent already installed at {:?}", plist_path);
-            println!("To reinstall, run: groundeffect daemon uninstall && groundeffect daemon install");
+            println!(
+                "To reinstall, run: groundeffect daemon uninstall && groundeffect daemon install"
+            );
         } else {
-            println!("{{\"status\": \"already_installed\", \"plist_path\": \"{}\"}}", plist_path.display());
+            println!(
+                "{{\"status\": \"already_installed\", \"plist_path\": \"{}\"}}",
+                plist_path.display()
+            );
         }
         return Ok(());
     }
@@ -2702,7 +2955,11 @@ fn daemon_install(logging: Option<bool>, human: bool) -> Result<()> {
 </dict>
 </plist>"#,
         daemon_path = daemon_path.display(),
-        logging_flag = if daemon_config.logging_enabled { " --log" } else { "" },
+        logging_flag = if daemon_config.logging_enabled {
+            " --log"
+        } else {
+            ""
+        },
         stdout = log_dir.join("stdout.log").display(),
         stderr = log_dir.join("stderr.log").display(),
         email_interval = daemon_config.email_poll_interval_secs,
@@ -2723,7 +2980,10 @@ fn daemon_install(logging: Option<bool>, human: bool) -> Result<()> {
             if human {
                 println!("Failed to load launchd agent: {}", stderr);
             } else {
-                println!("{{\"status\": \"error\", \"message\": \"{}\"}}", stderr.replace('"', "\\\""));
+                println!(
+                    "{{\"status\": \"error\", \"message\": \"{}\"}}",
+                    stderr.replace('"', "\\\"")
+                );
             }
             return Ok(());
         }
@@ -2737,9 +2997,11 @@ fn daemon_install(logging: Option<bool>, human: bool) -> Result<()> {
         println!("\nThe daemon will start automatically at login.");
         println!("To customize settings: groundeffect config settings");
     } else {
-        println!("{{\"status\": \"installed\", \"plist_path\": \"{}\", \"config_path\": \"{}\"}}",
+        println!(
+            "{{\"status\": \"installed\", \"plist_path\": \"{}\", \"config_path\": \"{}\"}}",
             plist_path.display(),
-            DaemonConfig::config_path().display());
+            DaemonConfig::config_path().display()
+        );
     }
 
     Ok(())
@@ -2808,15 +3070,22 @@ fn find_daemon_binary() -> Result<std::path::PathBuf> {
         }
     }
 
-    anyhow::bail!("Could not find groundeffect-daemon binary. Make sure it's installed and in your PATH.")
+    anyhow::bail!(
+        "Could not find groundeffect-daemon binary. Make sure it's installed and in your PATH."
+    )
 }
 
 // ============================================================================
 // Account Add/Delete/Configure Functions
 // ============================================================================
 
-async fn account_add(years: Option<String>, attachments: bool, alias: Option<String>, human: bool) -> Result<()> {
-    use dialoguer::{Input, Select, Confirm};
+async fn account_add(
+    years: Option<String>,
+    attachments: bool,
+    alias: Option<String>,
+    human: bool,
+) -> Result<()> {
+    use dialoguer::{Confirm, Input, Select};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
@@ -2851,7 +3120,13 @@ async fn account_add(years: Option<String>, attachments: bool, alias: Option<Str
         Some(y) => y,
         None => {
             if human {
-                let options = &["1 year (recommended)", "2 years", "5 years", "10 years", "All email history"];
+                let options = &[
+                    "1 year (recommended)",
+                    "2 years",
+                    "5 years",
+                    "10 years",
+                    "All email history",
+                ];
                 let selection = Select::new()
                     .with_prompt("How many years of email history to sync?")
                     .items(options)
@@ -2880,14 +3155,24 @@ async fn account_add(years: Option<String>, attachments: bool, alias: Option<Str
     };
 
     let account_alias = match alias {
-        Some(a) => if a.is_empty() { None } else { Some(a) },
+        Some(a) => {
+            if a.is_empty() {
+                None
+            } else {
+                Some(a)
+            }
+        }
         None => {
             if human {
                 let input: String = Input::new()
                     .with_prompt("Alias for this account (optional, press Enter to skip)")
                     .allow_empty(true)
                     .interact_text()?;
-                if input.is_empty() { None } else { Some(input) }
+                if input.is_empty() {
+                    None
+                } else {
+                    Some(input)
+                }
             } else {
                 None
             }
@@ -2985,7 +3270,9 @@ async fn account_add(years: Option<String>, attachments: bool, alias: Option<Str
     let (tokens, user_info) = oauth.exchange_code(&code).await?;
 
     // Store tokens
-    token_provider.store_tokens(&user_info.email, &tokens).await?;
+    token_provider
+        .store_tokens(&user_info.email, &tokens)
+        .await?;
 
     // Open database and create/update account
     std::fs::create_dir_all(config.lancedb_dir())?;
@@ -3028,7 +3315,14 @@ async fn account_add(years: Option<String>, attachments: bool, alias: Option<Str
             println!("   Alias: {}", a);
         }
         println!("   Sync {} of email history", years_to_sync);
-        println!("   Attachments: {}", if sync_attachments { "enabled" } else { "disabled" });
+        println!(
+            "   Attachments: {}",
+            if sync_attachments {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
         println!("\nThe daemon will start syncing automatically if running.");
     } else {
         println!("{{\"success\": true, \"account\": {{\"id\": \"{}\", \"alias\": {}, \"years_to_sync\": \"{}\", \"sync_attachments\": {}}}}}",
@@ -3050,7 +3344,8 @@ async fn account_reauth(account: &str, human: bool) -> Result<()> {
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
-    let email = accounts.iter()
+    let email = accounts
+        .iter()
         .find(|a| a.id == account || a.alias.as_ref() == Some(&account.to_string()))
         .map(|a| a.id.clone());
 
@@ -3171,10 +3466,16 @@ async fn account_reauth(account: &str, human: bool) -> Result<()> {
 
     if user_info.email != email {
         if human {
-            println!("❌ Authenticated as {}, expected {}", user_info.email, email);
+            println!(
+                "❌ Authenticated as {}, expected {}",
+                user_info.email, email
+            );
             println!("Please retry and select the correct Google account.");
         } else {
-            println!("{{\"success\": false, \"error\": \"Authenticated as {} but expected {}\"}}", user_info.email, email);
+            println!(
+                "{{\"success\": false, \"error\": \"Authenticated as {} but expected {}\"}}",
+                user_info.email, email
+            );
         }
         return Ok(());
     }
@@ -3194,7 +3495,10 @@ async fn account_reauth(account: &str, human: bool) -> Result<()> {
     if human {
         println!("🎉 Re-authenticated account: {}", email);
     } else {
-        println!("{{\"success\": true, \"account\": \"{}\", \"status\": \"active\"}}", email);
+        println!(
+            "{{\"success\": true, \"account\": \"{}\", \"status\": \"active\"}}",
+            email
+        );
     }
 
     Ok(())
@@ -3211,7 +3515,9 @@ fn parse_oauth_callback(request_line: &str) -> Result<(String, String)> {
         anyhow::bail!("Unexpected callback path: {}", path);
     }
 
-    let query_start = path.find('?').ok_or_else(|| anyhow::anyhow!("No query string"))?;
+    let query_start = path
+        .find('?')
+        .ok_or_else(|| anyhow::anyhow!("No query string"))?;
     let query = &path[query_start + 1..];
 
     let mut code = None;
@@ -3238,7 +3544,9 @@ async fn account_delete(account: &str, confirm: bool, human: bool) -> Result<()>
     if !confirm {
         if human {
             println!("❌ Must pass --confirm flag to delete an account.");
-            println!("\nThis will permanently delete all synced emails and events for this account.");
+            println!(
+                "\nThis will permanently delete all synced emails and events for this account."
+            );
             println!("Example: groundeffect account delete {} --confirm", account);
         } else {
             println!("{{\"success\": false, \"error\": \"Must pass --confirm to delete\"}}");
@@ -3252,7 +3560,8 @@ async fn account_delete(account: &str, confirm: bool, human: bool) -> Result<()>
     let accounts = db.list_accounts().await?;
 
     // Resolve account
-    let email = accounts.iter()
+    let email = accounts
+        .iter()
         .find(|a| a.id == account || a.alias.as_ref() == Some(&account.to_string()))
         .map(|a| a.id.clone());
 
@@ -3292,13 +3601,20 @@ async fn account_delete(account: &str, confirm: bool, human: bool) -> Result<()>
     Ok(())
 }
 
-async fn account_configure(account: &str, alias: Option<String>, attachments: bool, no_attachments: bool, human: bool) -> Result<()> {
+async fn account_configure(
+    account: &str,
+    alias: Option<String>,
+    attachments: bool,
+    no_attachments: bool,
+    human: bool,
+) -> Result<()> {
     let config = Config::load().unwrap_or_default();
     let db = Database::open(config.lancedb_dir()).await?;
     let accounts = db.list_accounts().await?;
 
     // Resolve account
-    let email = accounts.iter()
+    let email = accounts
+        .iter()
         .find(|a| a.id == account || a.alias.as_ref() == Some(&account.to_string()))
         .map(|a| a.id.clone());
 
@@ -3408,7 +3724,8 @@ async fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 openrouter_model,
                 openrouter_api_key_env,
                 human,
-            ).await
+            )
+            .await
         }
     }
 }
@@ -3417,7 +3734,8 @@ async fn config_add_permissions() -> Result<()> {
     use std::fs;
     use std::path::PathBuf;
 
-    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
+    let home =
+        std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
     let home_path = PathBuf::from(&home);
     let settings_path = home_path.join(".claude").join("settings.json");
 
@@ -3442,7 +3760,8 @@ async fn config_add_permissions() -> Result<()> {
         settings["permissions"]["allow"] = serde_json::json!([]);
     }
 
-    let allow_list = settings["permissions"]["allow"].as_array_mut()
+    let allow_list = settings["permissions"]["allow"]
+        .as_array_mut()
         .ok_or_else(|| anyhow::anyhow!("permissions.allow is not an array"))?;
 
     if allow_list.iter().any(|v| v.as_str() == Some(permission)) {
@@ -3462,7 +3781,10 @@ async fn config_add_permissions() -> Result<()> {
     // Look for skill source in common locations
     // Note: This may fail during homebrew post_install due to sandbox restrictions,
     // so we catch and report errors but don't fail the overall command
-    let skill_dest = home_path.join(".claude").join("skills").join("groundeffect");
+    let skill_dest = home_path
+        .join(".claude")
+        .join("skills")
+        .join("groundeffect");
     let skill_sources = [
         // Homebrew share directory
         PathBuf::from("/opt/homebrew/share/groundeffect/skill"),
@@ -3517,7 +3839,8 @@ async fn config_remove_permissions() -> Result<()> {
     use std::fs;
     use std::path::PathBuf;
 
-    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
+    let home =
+        std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
     let settings_path = PathBuf::from(&home).join(".claude").join("settings.json");
 
     if !settings_path.exists() {
@@ -3531,7 +3854,8 @@ async fn config_remove_permissions() -> Result<()> {
     let content = fs::read_to_string(&settings_path)?;
     let mut settings: serde_json::Value = serde_json::from_str(&content)?;
 
-    let removed = if let Some(allow_list) = settings.get_mut("permissions")
+    let removed = if let Some(allow_list) = settings
+        .get_mut("permissions")
         .and_then(|p| p.get_mut("allow"))
         .and_then(|a| a.as_array_mut())
     {
@@ -3630,21 +3954,24 @@ async fn email_send(
             println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             println!("To send: add --confirm | To save as draft: add --save-as-draft");
         } else {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                "status": "preview",
-                "message": "Add --confirm to send, or --save-as-draft to save as draft",
-                "email": {
-                    "from": format!("{} <{}>", display_name, from_email),
-                    "to": to,
-                    "cc": cc_list,
-                    "bcc": bcc_list,
-                    "subject": final_subject,
-                    "body": body,
-                    "is_html": is_html,
-                    "in_reply_to": in_reply_to,
-                    "references": references,
-                }
-            }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "preview",
+                    "message": "Add --confirm to send, or --save-as-draft to save as draft",
+                    "email": {
+                        "from": format!("{} <{}>", display_name, from_email),
+                        "to": to,
+                        "cc": cc_list,
+                        "bcc": bcc_list,
+                        "subject": final_subject,
+                        "body": body,
+                        "is_html": is_html,
+                        "in_reply_to": in_reply_to,
+                        "references": references,
+                    }
+                }))?
+            );
         }
         return Ok(());
     }
@@ -3688,7 +4015,11 @@ async fn email_send(
             if human {
                 println!("❌ Failed to create draft: {} - {}", status, error_body);
             } else {
-                println!("{{\"status\": \"error\", \"message\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+                println!(
+                    "{{\"status\": \"error\", \"message\": \"{} - {}\"}}",
+                    status,
+                    error_body.replace('"', "\\\"")
+                );
             }
             return Ok(());
         }
@@ -3702,16 +4033,22 @@ async fn email_send(
             println!("   Draft ID: {}", draft_id);
             println!("   To: {}", to.join(", "));
             println!("   Subject: {}", final_subject);
-            println!("\nUse 'groundeffect email draft send --from {} --draft-id {}' to send", from, draft_id);
+            println!(
+                "\nUse 'groundeffect email draft send --from {} --draft-id {}' to send",
+                from, draft_id
+            );
         } else {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                "status": "draft_created",
-                "draft_id": draft_id,
-                "message_id": message_id,
-                "from": format!("{} <{}>", display_name, from_email),
-                "to": to,
-                "subject": final_subject,
-            }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "draft_created",
+                    "draft_id": draft_id,
+                    "message_id": message_id,
+                    "from": format!("{} <{}>", display_name, from_email),
+                    "to": to,
+                    "subject": final_subject,
+                }))?
+            );
         }
         return Ok(());
     }
@@ -3732,7 +4069,11 @@ async fn email_send(
         if human {
             println!("❌ Failed to send email: {} - {}", status, error_body);
         } else {
-            println!("{{\"status\": \"error\", \"message\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+            println!(
+                "{{\"status\": \"error\", \"message\": \"{} - {}\"}}",
+                status,
+                error_body.replace('"', "\\\"")
+            );
         }
         return Ok(());
     }
@@ -3746,13 +4087,16 @@ async fn email_send(
         println!("   To: {}", to.join(", "));
         println!("   Subject: {}", final_subject);
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "status": "sent",
-            "message_id": message_id,
-            "from": format!("{} <{}>", display_name, from_email),
-            "to": to,
-            "subject": final_subject,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "sent",
+                "message_id": message_id,
+                "from": format!("{} <{}>", display_name, from_email),
+                "to": to,
+                "subject": final_subject,
+            }))?
+        );
     }
 
     Ok(())
@@ -3789,18 +4133,15 @@ async fn email_attachment(
     };
 
     // Find the attachment
-    let attachment = email
-        .attachments
-        .iter()
-        .find(|a| {
-            if let Some(id) = attachment_id {
-                a.id == id
-            } else if let Some(name) = filename {
-                a.filename.eq_ignore_ascii_case(name)
-            } else {
-                false
-            }
-        });
+    let attachment = email.attachments.iter().find(|a| {
+        if let Some(id) = attachment_id {
+            a.id == id
+        } else if let Some(name) = filename {
+            a.filename.eq_ignore_ascii_case(name)
+        } else {
+            false
+        }
+    });
 
     let attachment = match attachment {
         Some(a) => a,
@@ -3826,16 +4167,19 @@ async fn email_attachment(
             println!("\nTo download attachments:");
             println!("  groundeffect sync download-attachments --account <account>");
         } else {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                "error": "not_downloaded",
-                "message": "Attachment not downloaded. Use 'sync download-attachments' command.",
-                "attachment": {
-                    "id": attachment.id,
-                    "filename": attachment.filename,
-                    "mime_type": attachment.mime_type,
-                    "size": attachment.size,
-                }
-            }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "error": "not_downloaded",
+                    "message": "Attachment not downloaded. Use 'sync download-attachments' command.",
+                    "attachment": {
+                        "id": attachment.id,
+                        "filename": attachment.filename,
+                        "mime_type": attachment.mime_type,
+                        "size": attachment.size,
+                    }
+                }))?
+            );
         }
         return Ok(());
     }
@@ -3856,7 +4200,10 @@ async fn email_attachment(
         if human {
             println!("❌ Attachment file missing: {:?}", local_path);
         } else {
-            println!("{{\"error\": \"Attachment file missing\", \"path\": \"{}\"}}", local_path.display());
+            println!(
+                "{{\"error\": \"Attachment file missing\", \"path\": \"{}\"}}",
+                local_path.display()
+            );
         }
         return Ok(());
     }
@@ -3964,9 +4311,10 @@ async fn calendar_create(
 
     if let Some(att) = &attendees {
         if !att.is_empty() {
-            event_body["attendees"] = serde_json::json!(
-                att.iter().map(|email| serde_json::json!({"email": email})).collect::<Vec<_>>()
-            );
+            event_body["attendees"] = serde_json::json!(att
+                .iter()
+                .map(|email| serde_json::json!({"email": email}))
+                .collect::<Vec<_>>());
         }
     }
 
@@ -3994,7 +4342,11 @@ async fn calendar_create(
         if human {
             println!("❌ Failed to create event: {} - {}", status, error_body);
         } else {
-            println!("{{\"success\": false, \"error\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+            println!(
+                "{{\"success\": false, \"error\": \"{} - {}\"}}",
+                status,
+                error_body.replace('"', "\\\"")
+            );
         }
         return Ok(());
     }
@@ -4014,18 +4366,21 @@ async fn calendar_create(
             println!("   Link: {}", link);
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "success": true,
-            "event": {
-                "id": event_id,
-                "summary": summary,
-                "start": start,
-                "end": end,
-                "calendar_id": calendar_id,
-                "account": account_email,
-                "html_link": html_link
-            }
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": true,
+                "event": {
+                    "id": event_id,
+                    "summary": summary,
+                    "start": start,
+                    "end": end,
+                    "calendar_id": calendar_id,
+                    "account": account_email,
+                    "html_link": html_link
+                }
+            }))?
+        );
     }
 
     Ok(())
@@ -4048,8 +4403,14 @@ async fn sync_reset(account: &str, data_type: &str, confirm: bool, human: bool) 
     if !confirm {
         if human {
             println!("❌ Must pass --confirm to reset sync data.");
-            println!("\nThis will permanently delete synced {} data for this account.", data_type);
-            println!("Example: groundeffect sync reset --account {} --confirm", account);
+            println!(
+                "\nThis will permanently delete synced {} data for this account.",
+                data_type
+            );
+            println!(
+                "Example: groundeffect sync reset --account {} --confirm",
+                account
+            );
         } else {
             println!("{{\"success\": false, \"error\": \"Must pass --confirm to reset\"}}");
         }
@@ -4118,14 +4479,17 @@ async fn sync_reset(account: &str, data_type: &str, confirm: bool, human: bool) 
         println!("   {} events deleted", event_count);
         println!("\nRestart the daemon to re-sync.");
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "success": true,
-            "message": format!("Reset {} sync data for {}", data_type, email),
-            "deleted": {
-                "emails": email_count,
-                "events": event_count
-            }
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": true,
+                "message": format!("Reset {} sync data for {}", data_type, email),
+                "deleted": {
+                    "emails": email_count,
+                    "events": event_count
+                }
+            }))?
+        );
     }
 
     Ok(())
@@ -4154,9 +4518,13 @@ async fn sync_extend(account: &str, target_date: &str, human: bool) -> Result<()
         }
     };
 
-    let acct = db.get_account(&email).await?.ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+    let acct = db
+        .get_account(&email)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
-    let current_sync_from = acct.sync_email_since
+    let current_sync_from = acct
+        .sync_email_since
         .unwrap_or_else(|| Utc::now() - chrono::Duration::days(90));
 
     // Parse target date
@@ -4170,8 +4538,11 @@ async fn sync_extend(account: &str, target_date: &str, human: bool) -> Result<()
 
     if target_datetime >= current_sync_from {
         if human {
-            println!("❌ Target date {} is already within current sync range (back to {})",
-                target_date, current_sync_from.format("%Y-%m-%d"));
+            println!(
+                "❌ Target date {} is already within current sync range (back to {})",
+                target_date,
+                current_sync_from.format("%Y-%m-%d")
+            );
             println!("Choose an earlier date.");
         } else {
             println!("{{\"success\": false, \"error\": \"Target date must be earlier than current sync_from\"}}");
@@ -4199,17 +4570,20 @@ async fn sync_extend(account: &str, target_date: &str, human: bool) -> Result<()
             None => println!("\nNote: Daemon not running. Start it to sync older data."),
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "success": true,
-            "account": email,
-            "sync_range": {
-                "previous_sync_from": current_sync_from.format("%Y-%m-%d").to_string(),
-                "new_sync_from": target_date,
-                "additional_days": additional_days
-            },
-            "daemon_restarted": restart_method.is_some(),
-            "restart_method": restart_method
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": true,
+                "account": email,
+                "sync_range": {
+                    "previous_sync_from": current_sync_from.format("%Y-%m-%d").to_string(),
+                    "new_sync_from": target_date,
+                    "additional_days": additional_days
+                },
+                "daemon_restarted": restart_method.is_some(),
+                "restart_method": restart_method
+            }))?
+        );
     }
 
     Ok(())
@@ -4247,7 +4621,10 @@ async fn sync_resume_from(account: &str, target_date: &str, human: bool) -> Resu
         .and_then(|dt| dt.and_local_timezone(Utc).single())
         .ok_or_else(|| anyhow::anyhow!("Failed to parse date"))?;
 
-    let acct = db.get_account(&email).await?.ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+    let acct = db
+        .get_account(&email)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
     let old_oldest_email = acct.oldest_email_synced;
     let old_oldest_event = acct.oldest_event_synced;
@@ -4270,15 +4647,18 @@ async fn sync_resume_from(account: &str, target_date: &str, human: bool) -> Resu
         }
         println!("\nExisting data is preserved. Restart the daemon to apply changes.");
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "success": true,
-            "account": email,
-            "resume_from": target_date,
-            "previous_state": {
-                "oldest_email_synced": old_oldest_email.map(|d| d.format("%Y-%m-%d").to_string()),
-                "oldest_event_synced": old_oldest_event.map(|d| d.format("%Y-%m-%d").to_string())
-            }
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": true,
+                "account": email,
+                "resume_from": target_date,
+                "previous_state": {
+                    "oldest_email_synced": old_oldest_email.map(|d| d.format("%Y-%m-%d").to_string()),
+                    "oldest_event_synced": old_oldest_event.map(|d| d.format("%Y-%m-%d").to_string())
+                }
+            }))?
+        );
     }
 
     Ok(())
@@ -4317,17 +4697,23 @@ async fn sync_download_attachments(account: &str, human: bool) -> Result<()> {
             println!("   Total attachments: {}", total);
             println!("   Downloaded: {}", downloaded);
         } else {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                "success": true,
-                "account": email,
-                "pending_count": 0,
-                "message": "No pending attachments"
-            }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "success": true,
+                    "account": email,
+                    "pending_count": 0,
+                    "message": "No pending attachments"
+                }))?
+            );
         }
         return Ok(());
     }
 
-    let acct = db.get_account(&email).await?.ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+    let acct = db
+        .get_account(&email)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
     // Enable sync_attachments if not already
     let was_enabled = acct.sync_attachments;
@@ -4348,17 +4734,20 @@ async fn sync_download_attachments(account: &str, human: bool) -> Result<()> {
         println!("\nThe daemon will download attachments in the background.");
         println!("Restart the daemon if it's not running.");
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "success": true,
-            "account": email,
-            "pending_count": pending,
-            "sync_attachments_enabled": true,
-            "message": if was_enabled {
-                "sync_attachments already enabled - daemon will download in background"
-            } else {
-                "Enabled sync_attachments - daemon will download in background"
-            }
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": true,
+                "account": email,
+                "pending_count": pending,
+                "sync_attachments_enabled": true,
+                "message": if was_enabled {
+                    "sync_attachments already enabled - daemon will download in background"
+                } else {
+                    "Enabled sync_attachments - daemon will download in background"
+                }
+            }))?
+        );
     }
 
     Ok(())
@@ -4491,10 +4880,12 @@ async fn config_settings(
     }
 
     // Save configs if changes were made
-    let daemon_config_changed = changes.iter().any(|c|
-        c.starts_with("logging") || c.starts_with("email_poll") ||
-        c.starts_with("calendar_poll") || c.starts_with("max_concurrent")
-    );
+    let daemon_config_changed = changes.iter().any(|c| {
+        c.starts_with("logging")
+            || c.starts_with("email_poll")
+            || c.starts_with("calendar_poll")
+            || c.starts_with("max_concurrent")
+    });
     if daemon_config_changed {
         daemon_config.save()?;
     }
@@ -4520,20 +4911,38 @@ async fn config_settings(
         );
         if provider == EmbeddingProvider::OpenRouter {
             println!("OpenRouter model: {}", config.search.openrouter_model);
-            println!("OpenRouter API key env: {}", config.search.openrouter_api_key_env);
+            println!(
+                "OpenRouter API key env: {}",
+                config.search.openrouter_api_key_env
+            );
         } else if provider == EmbeddingProvider::Remote {
-            println!("Remote embedding URL: {}", config.search.embedding_url.as_deref().unwrap_or("(unset)"));
+            println!(
+                "Remote embedding URL: {}",
+                config.search.embedding_url.as_deref().unwrap_or("(unset)")
+            );
         }
         println!("Logging enabled: {}", daemon_config.logging_enabled);
-        println!("Email poll interval: {} seconds", daemon_config.email_poll_interval_secs);
-        println!("Calendar poll interval: {} seconds", daemon_config.calendar_poll_interval_secs);
-        println!("Max concurrent fetches: {}", daemon_config.max_concurrent_fetches);
+        println!(
+            "Email poll interval: {} seconds",
+            daemon_config.email_poll_interval_secs
+        );
+        println!(
+            "Calendar poll interval: {} seconds",
+            daemon_config.calendar_poll_interval_secs
+        );
+        println!(
+            "Max concurrent fetches: {}",
+            daemon_config.max_concurrent_fetches
+        );
         println!("\nDaemon config: {:?}", DaemonConfig::config_path());
-        println!("Config file: {:?}", dirs::home_dir()
-            .unwrap_or_default()
-            .join(".config")
-            .join("groundeffect")
-            .join("config.toml"));
+        println!(
+            "Config file: {:?}",
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".config")
+                .join("groundeffect")
+                .join("config.toml")
+        );
 
         if !changes.is_empty() {
             println!("\nChanges made:");
@@ -4549,23 +4958,26 @@ async fn config_settings(
             EmbeddingProvider::OpenRouter => "openrouter",
             EmbeddingProvider::Remote => "remote",
         };
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "settings": {
-                "timezone": config.general.timezone,
-                "embedding_provider": provider_label,
-                "embedding_batch_size": config.search.effective_embedding_batch_size(),
-                "imap_fetch_batch_size": config.search.effective_imap_fetch_batch_size(),
-                "openrouter_model": config.search.openrouter_model,
-                "openrouter_api_key_env": config.search.openrouter_api_key_env,
-                "embedding_url": config.search.embedding_url,
-                "logging_enabled": daemon_config.logging_enabled,
-                "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
-                "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
-                "max_concurrent_fetches": daemon_config.max_concurrent_fetches,
-            },
-            "daemon_config_path": DaemonConfig::config_path().to_string_lossy(),
-            "changes": changes
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "settings": {
+                    "timezone": config.general.timezone,
+                    "embedding_provider": provider_label,
+                    "embedding_batch_size": config.search.effective_embedding_batch_size(),
+                    "imap_fetch_batch_size": config.search.effective_imap_fetch_batch_size(),
+                    "openrouter_model": config.search.openrouter_model,
+                    "openrouter_api_key_env": config.search.openrouter_api_key_env,
+                    "embedding_url": config.search.embedding_url,
+                    "logging_enabled": daemon_config.logging_enabled,
+                    "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
+                    "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
+                    "max_concurrent_fetches": daemon_config.max_concurrent_fetches,
+                },
+                "daemon_config_path": DaemonConfig::config_path().to_string_lossy(),
+                "changes": changes
+            }))?
+        );
     }
 
     Ok(())
@@ -4577,7 +4989,17 @@ async fn config_settings(
 
 async fn handle_draft_command(command: DraftCommands, global_human: bool) -> Result<()> {
     match command {
-        DraftCommands::Create { from, to, subject, body, cc, bcc, html, reply_to, human } => {
+        DraftCommands::Create {
+            from,
+            to,
+            subject,
+            body,
+            cc,
+            bcc,
+            html,
+            reply_to,
+            human,
+        } => {
             let human = human || global_human;
             draft_create(&from, to, &subject, &body, cc, bcc, html, reply_to, human).await?;
         }
@@ -4585,19 +5007,41 @@ async fn handle_draft_command(command: DraftCommands, global_human: bool) -> Res
             let human = human || global_human;
             draft_list(&from, limit, human).await?;
         }
-        DraftCommands::Show { from, draft_id, human } => {
+        DraftCommands::Show {
+            from,
+            draft_id,
+            human,
+        } => {
             let human = human || global_human;
             draft_show(&from, &draft_id, human).await?;
         }
-        DraftCommands::Update { from, draft_id, to, subject, body, cc, bcc, html, human } => {
+        DraftCommands::Update {
+            from,
+            draft_id,
+            to,
+            subject,
+            body,
+            cc,
+            bcc,
+            html,
+            human,
+        } => {
             let human = human || global_human;
             draft_update(&from, &draft_id, to, subject, body, cc, bcc, html, human).await?;
         }
-        DraftCommands::Send { from, draft_id, human } => {
+        DraftCommands::Send {
+            from,
+            draft_id,
+            human,
+        } => {
             let human = human || global_human;
             draft_send(&from, &draft_id, human).await?;
         }
-        DraftCommands::Delete { from, draft_id, human } => {
+        DraftCommands::Delete {
+            from,
+            draft_id,
+            human,
+        } => {
             let human = human || global_human;
             draft_delete(&from, &draft_id, human).await?;
         }
@@ -4652,9 +5096,16 @@ async fn draft_create(
     let is_html = force_html || detect_html_content(body);
 
     let message = build_email_message(
-        display_name, from_email, &to, &cc_list, &bcc_list,
-        &final_subject, body, is_html,
-        in_reply_to.as_deref(), references.as_deref(),
+        display_name,
+        from_email,
+        &to,
+        &cc_list,
+        &bcc_list,
+        &final_subject,
+        body,
+        is_html,
+        in_reply_to.as_deref(),
+        references.as_deref(),
     );
 
     let encoded = URL_SAFE_NO_PAD.encode(message.as_bytes());
@@ -4676,7 +5127,11 @@ async fn draft_create(
         if human {
             println!("❌ Failed to create draft: {} - {}", status, error_body);
         } else {
-            println!("{{\"error\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+            println!(
+                "{{\"error\": \"{} - {}\"}}",
+                status,
+                error_body.replace('"', "\\\"")
+            );
         }
         return Ok(());
     }
@@ -4690,14 +5145,17 @@ async fn draft_create(
         println!("   Draft ID: {}", draft_id);
         println!("   Subject: {}", final_subject);
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "status": "draft_created",
-            "draft_id": draft_id,
-            "message_id": message_id,
-            "from": format!("{} <{}>", display_name, from_email),
-            "to": to,
-            "subject": final_subject,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "draft_created",
+                "draft_id": draft_id,
+                "message_id": message_id,
+                "from": format!("{} <{}>", display_name, from_email),
+                "to": to,
+                "subject": final_subject,
+            }))?
+        );
     }
 
     Ok(())
@@ -4720,7 +5178,10 @@ async fn draft_list(from: &str, limit: usize, human: bool) -> Result<()> {
     let client = reqwest::Client::new();
 
     let response = client
-        .get(format!("https://gmail.googleapis.com/gmail/v1/users/me/drafts?maxResults={}", limit.min(100)))
+        .get(format!(
+            "https://gmail.googleapis.com/gmail/v1/users/me/drafts?maxResults={}",
+            limit.min(100)
+        ))
         .bearer_auth(&access_token)
         .send()
         .await?;
@@ -4731,7 +5192,11 @@ async fn draft_list(from: &str, limit: usize, human: bool) -> Result<()> {
         if human {
             println!("❌ Failed to list drafts: {} - {}", status, error_body);
         } else {
-            println!("{{\"error\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+            println!(
+                "{{\"error\": \"{} - {}\"}}",
+                status,
+                error_body.replace('"', "\\\"")
+            );
         }
         return Ok(());
     }
@@ -4743,7 +5208,10 @@ async fn draft_list(from: &str, limit: usize, human: bool) -> Result<()> {
         if human {
             println!("📭 No drafts found.");
         } else {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "drafts": [], "total": 0 }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "drafts": [], "total": 0 }))?
+            );
         }
         return Ok(());
     }
@@ -4793,7 +5261,12 @@ async fn draft_list(from: &str, limit: usize, human: bool) -> Result<()> {
             println!();
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "drafts": drafts, "total": drafts.len() }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &serde_json::json!({ "drafts": drafts, "total": drafts.len() })
+            )?
+        );
     }
 
     Ok(())
@@ -4816,7 +5289,10 @@ async fn draft_show(from: &str, draft_id: &str, human: bool) -> Result<()> {
     let client = reqwest::Client::new();
 
     let response = client
-        .get(format!("https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}?format=full", draft_id))
+        .get(format!(
+            "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}?format=full",
+            draft_id
+        ))
         .bearer_auth(&access_token)
         .send()
         .await?;
@@ -4827,7 +5303,11 @@ async fn draft_show(from: &str, draft_id: &str, human: bool) -> Result<()> {
         if human {
             println!("❌ Failed to get draft: {} - {}", status, error_body);
         } else {
-            println!("{{\"error\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+            println!(
+                "{{\"error\": \"{} - {}\"}}",
+                status,
+                error_body.replace('"', "\\\"")
+            );
         }
         return Ok(());
     }
@@ -4860,8 +5340,12 @@ async fn draft_show(from: &str, draft_id: &str, human: bool) -> Result<()> {
         if mime_type == "text/plain" {
             if let Some(body_data) = part["body"]["data"].as_str() {
                 // Gmail uses URL-safe base64 - try with padding first, then without
-                use base64::{Engine, engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD}};
-                let decoded = URL_SAFE.decode(body_data)
+                use base64::{
+                    engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
+                    Engine,
+                };
+                let decoded = URL_SAFE
+                    .decode(body_data)
                     .or_else(|_| URL_SAFE_NO_PAD.decode(body_data));
 
                 if let Ok(decoded) = decoded {
@@ -4890,24 +5374,35 @@ async fn draft_show(from: &str, draft_id: &str, human: bool) -> Result<()> {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         println!("From: {}", from_header);
         println!("To: {}", to);
-        if !cc.is_empty() { println!("CC: {}", cc); }
+        if !cc.is_empty() {
+            println!("CC: {}", cc);
+        }
         println!("Subject: {}", subject);
         println!("Date: {}", date);
         println!("\n{}", body);
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "draft_id": draft_id, "from": from_header, "to": to, "cc": cc,
-            "subject": subject, "body": body, "date": date,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "draft_id": draft_id, "from": from_header, "to": to, "cc": cc,
+                "subject": subject, "body": body, "date": date,
+            }))?
+        );
     }
 
     Ok(())
 }
 
 async fn draft_update(
-    from: &str, draft_id: &str, to: Option<Vec<String>>, subject: Option<String>,
-    body: Option<String>, cc: Option<Vec<String>>, bcc: Option<Vec<String>>,
-    force_html: bool, human: bool,
+    from: &str,
+    draft_id: &str,
+    to: Option<Vec<String>>,
+    subject: Option<String>,
+    body: Option<String>,
+    cc: Option<Vec<String>>,
+    bcc: Option<Vec<String>>,
+    force_html: bool,
+    human: bool,
 ) -> Result<()> {
     let config = Config::load().unwrap_or_default();
     let token_provider = create_token_provider(&config).await?;
@@ -4927,7 +5422,10 @@ async fn draft_update(
 
     // Get existing draft
     let existing_response = client
-        .get(format!("https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}?format=full", draft_id))
+        .get(format!(
+            "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}?format=full",
+            draft_id
+        ))
         .bearer_auth(&access_token)
         .send()
         .await?;
@@ -4938,7 +5436,11 @@ async fn draft_update(
         if human {
             println!("❌ Failed to get draft: {} - {}", status, error_body);
         } else {
-            println!("{{\"error\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+            println!(
+                "{{\"error\": \"{} - {}\"}}",
+                status,
+                error_body.replace('"', "\\\"")
+            );
         }
         return Ok(());
     }
@@ -4986,23 +5488,46 @@ async fn draft_update(
         }
     }
 
-    let final_to: Vec<String> = to.unwrap_or_else(|| existing_to.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
+    let final_to: Vec<String> = to.unwrap_or_else(|| {
+        existing_to
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
     let final_subject = subject.unwrap_or(existing_subject);
     let final_body = body.unwrap_or(existing_body);
-    let final_cc: Vec<String> = cc.unwrap_or_else(|| existing_cc.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
+    let final_cc: Vec<String> = cc.unwrap_or_else(|| {
+        existing_cc
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
     let final_bcc: Vec<String> = bcc.unwrap_or_default();
 
     let is_html = force_html || detect_html_content(&final_body);
 
     let message = build_email_message(
-        display_name, from_email, &final_to, &final_cc, &final_bcc,
-        &final_subject, &final_body, is_html, None, None,
+        display_name,
+        from_email,
+        &final_to,
+        &final_cc,
+        &final_bcc,
+        &final_subject,
+        &final_body,
+        is_html,
+        None,
+        None,
     );
 
     let encoded = URL_SAFE_NO_PAD.encode(message.as_bytes());
 
     let response = client
-        .put(format!("https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}", draft_id))
+        .put(format!(
+            "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}",
+            draft_id
+        ))
         .bearer_auth(&access_token)
         .json(&serde_json::json!({ "message": { "raw": encoded } }))
         .send()
@@ -5014,7 +5539,11 @@ async fn draft_update(
         if human {
             println!("❌ Failed to update draft: {} - {}", status, error_body);
         } else {
-            println!("{{\"error\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+            println!(
+                "{{\"error\": \"{} - {}\"}}",
+                status,
+                error_body.replace('"', "\\\"")
+            );
         }
         return Ok(());
     }
@@ -5027,11 +5556,14 @@ async fn draft_update(
         println!("   Draft ID: {}", new_draft_id);
         println!("   Subject: {}", final_subject);
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "status": "updated", "draft_id": new_draft_id,
-            "from": format!("{} <{}>", display_name, from_email),
-            "to": final_to, "subject": final_subject,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "updated", "draft_id": new_draft_id,
+                "from": format!("{} <{}>", display_name, from_email),
+                "to": final_to, "subject": final_subject,
+            }))?
+        );
     }
 
     Ok(())
@@ -5088,7 +5620,11 @@ async fn draft_send(from: &str, draft_id: &str, human: bool) -> Result<()> {
         if human {
             println!("❌ Failed to send draft: {} - {}", status, error_body);
         } else {
-            println!("{{\"error\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+            println!(
+                "{{\"error\": \"{} - {}\"}}",
+                status,
+                error_body.replace('"', "\\\"")
+            );
         }
         return Ok(());
     }
@@ -5102,9 +5638,12 @@ async fn draft_send(from: &str, draft_id: &str, human: bool) -> Result<()> {
         println!("   To: {}", to);
         println!("   Subject: {}", subject);
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "status": "sent", "message_id": message_id, "draft_id": draft_id, "to": to, "subject": subject,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "sent", "message_id": message_id, "draft_id": draft_id, "to": to, "subject": subject,
+            }))?
+        );
     }
 
     Ok(())
@@ -5127,7 +5666,10 @@ async fn draft_delete(from: &str, draft_id: &str, human: bool) -> Result<()> {
     let client = reqwest::Client::new();
 
     let response = client
-        .delete(format!("https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}", draft_id))
+        .delete(format!(
+            "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{}",
+            draft_id
+        ))
         .bearer_auth(&access_token)
         .send()
         .await?;
@@ -5138,7 +5680,11 @@ async fn draft_delete(from: &str, draft_id: &str, human: bool) -> Result<()> {
         if human {
             println!("❌ Failed to delete draft: {} - {}", status, error_body);
         } else {
-            println!("{{\"error\": \"{} - {}\"}}", status, error_body.replace('"', "\\\""));
+            println!(
+                "{{\"error\": \"{} - {}\"}}",
+                status,
+                error_body.replace('"', "\\\"")
+            );
         }
         return Ok(());
     }
@@ -5147,7 +5693,12 @@ async fn draft_delete(from: &str, draft_id: &str, human: bool) -> Result<()> {
         println!("✅ Draft deleted successfully!");
         println!("   Draft ID: {}", draft_id);
     } else {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "status": "deleted", "draft_id": draft_id }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &serde_json::json!({ "status": "deleted", "draft_id": draft_id })
+            )?
+        );
     }
 
     Ok(())
@@ -5160,16 +5711,26 @@ async fn draft_delete(from: &str, draft_id: &str, human: bool) -> Result<()> {
 fn detect_html_content(body: &str) -> bool {
     use regex::Regex;
     let md_link = Regex::new(r"\[.+?\]\(.+?\)").unwrap();
-    if md_link.is_match(body) { return true; }
+    if md_link.is_match(body) {
+        return true;
+    }
     let url_pattern = Regex::new(r"https?://[^\s]+").unwrap();
-    if url_pattern.is_match(body) { return true; }
+    if url_pattern.is_match(body) {
+        return true;
+    }
     let bold = Regex::new(r"\*\*.+?\*\*|__.+?__").unwrap();
-    if bold.is_match(body) { return true; }
+    if bold.is_match(body) {
+        return true;
+    }
     // Simple italic detection - single asterisk not part of bold
     let italic = Regex::new(r"(?:^|[^*])\*[^*\n]+?\*(?:[^*]|$)").unwrap();
-    if italic.is_match(body) { return true; }
+    if italic.is_match(body) {
+        return true;
+    }
     let html_tag = Regex::new(r"</?[a-zA-Z][^>]*>").unwrap();
-    if html_tag.is_match(body) { return true; }
+    if html_tag.is_match(body) {
+        return true;
+    }
     false
 }
 
@@ -5178,10 +5739,14 @@ fn convert_to_html(body: &str) -> String {
     let mut html = body.to_string();
     // Convert markdown links first
     let md_link = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
-    html = md_link.replace_all(&html, r#"<a href="$2">$1</a>"#).to_string();
+    html = md_link
+        .replace_all(&html, r#"<a href="$2">$1</a>"#)
+        .to_string();
     // Convert plain URLs not already in href (preceded by " or >)
     let url_pattern = Regex::new(r#"(^|[^">])(https?://[^\s<>"]+)"#).unwrap();
-    html = url_pattern.replace_all(&html, r#"$1<a href="$2">$2</a>"#).to_string();
+    html = url_pattern
+        .replace_all(&html, r#"$1<a href="$2">$2</a>"#)
+        .to_string();
     // Convert bold first (** and __)
     let bold = Regex::new(r"\*\*(.+?)\*\*").unwrap();
     html = bold.replace_all(&html, r"<strong>$1</strong>").to_string();
@@ -5225,18 +5790,34 @@ fn encode_display_name(name: &str) -> String {
 }
 
 fn build_email_message(
-    display_name: &str, from_email: &str, to: &[String], cc: &[String], bcc: &[String],
-    subject: &str, body: &str, is_html: bool, in_reply_to: Option<&str>, references: Option<&str>,
+    display_name: &str,
+    from_email: &str,
+    to: &[String],
+    cc: &[String],
+    bcc: &[String],
+    subject: &str,
+    body: &str,
+    is_html: bool,
+    in_reply_to: Option<&str>,
+    references: Option<&str>,
 ) -> String {
     let encoded_name = encode_display_name(display_name);
     let from_header = format!("{} <{}>", encoded_name, from_email);
 
     let mut message = format!("From: {}\r\nTo: {}\r\n", from_header, to.join(", "));
 
-    if !cc.is_empty() { message.push_str(&format!("Cc: {}\r\n", cc.join(", "))); }
-    if !bcc.is_empty() { message.push_str(&format!("Bcc: {}\r\n", bcc.join(", "))); }
-    if let Some(msg_id) = in_reply_to { message.push_str(&format!("In-Reply-To: {}\r\n", msg_id)); }
-    if let Some(refs) = references { message.push_str(&format!("References: {}\r\n", refs)); }
+    if !cc.is_empty() {
+        message.push_str(&format!("Cc: {}\r\n", cc.join(", ")));
+    }
+    if !bcc.is_empty() {
+        message.push_str(&format!("Bcc: {}\r\n", bcc.join(", ")));
+    }
+    if let Some(msg_id) = in_reply_to {
+        message.push_str(&format!("In-Reply-To: {}\r\n", msg_id));
+    }
+    if let Some(refs) = references {
+        message.push_str(&format!("References: {}\r\n", refs));
+    }
 
     message.push_str(&format!("Subject: {}\r\nMIME-Version: 1.0\r\n", subject));
 
@@ -5245,7 +5826,10 @@ fn build_email_message(
         let html_body = convert_to_html(body);
         let plain_body = strip_html_tags(&html_body);
 
-        message.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n\r\n", boundary));
+        message.push_str(&format!(
+            "Content-Type: multipart/alternative; boundary=\"{}\"\r\n\r\n",
+            boundary
+        ));
         message.push_str(&format!("--{}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n{}\r\n\r\n", boundary, plain_body));
         message.push_str(&format!("--{}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n{}\r\n\r\n", boundary, html_body));
         message.push_str(&format!("--{}--\r\n", boundary));

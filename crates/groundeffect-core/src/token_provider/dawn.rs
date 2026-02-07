@@ -66,11 +66,7 @@ impl DawnTokenProvider {
     ///     "01KEP0A3KKSY1RJ4MHVWW8BC1C",
     /// ).await?;
     /// ```
-    pub async fn new(
-        database_url: &str,
-        encryption_key: &str,
-        user_id: &str,
-    ) -> Result<Self> {
+    pub async fn new(database_url: &str, encryption_key: &str, user_id: &str) -> Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .connect(database_url)
@@ -78,13 +74,12 @@ impl DawnTokenProvider {
             .map_err(|e| Error::Config(format!("Failed to connect to database: {}", e)))?;
 
         let fernet = Fernet::new(encryption_key).ok_or_else(|| {
-            Error::Config("Invalid Fernet encryption key - must be 32-byte url-safe base64".to_string())
+            Error::Config(
+                "Invalid Fernet encryption key - must be 32-byte url-safe base64".to_string(),
+            )
         })?;
 
-        info!(
-            "Dawn token provider initialized for user_id: {}",
-            user_id
-        );
+        info!("Dawn token provider initialized for user_id: {}", user_id);
 
         Ok(Self {
             pool,
@@ -141,9 +136,7 @@ impl TokenProvider for DawnTokenProvider {
                 let access_token = self.decrypt(&access_encrypted)?;
                 let refresh_token = self.decrypt(&refresh_encrypted)?;
 
-                let expires_at_ts = expires_at
-                    .map(|dt| dt.timestamp())
-                    .unwrap_or(0);
+                let expires_at_ts = expires_at.map(|dt| dt.timestamp()).unwrap_or(0);
 
                 let tokens = OAuthTokens {
                     access_token,
@@ -229,7 +222,10 @@ impl TokenProvider for DawnTokenProvider {
         .map_err(|e| Error::Token(format!("Failed to list accounts: {}", e)))?;
 
         let accounts: Vec<String> = rows.iter().map(|row| row.get("account_email")).collect();
-        debug!("Found {} Google accounts in Dawn oauth_tokens", accounts.len());
+        debug!(
+            "Found {} Google accounts in Dawn oauth_tokens",
+            accounts.len()
+        );
         Ok(accounts)
     }
 }

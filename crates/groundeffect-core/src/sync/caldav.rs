@@ -87,9 +87,9 @@ impl CalDavClient {
             }
 
             let json: serde_json::Value = response.json().await?;
-            let items = json["items"].as_array().ok_or_else(|| {
-                Error::CalDav("Invalid response: no items array".to_string())
-            })?;
+            let items = json["items"]
+                .as_array()
+                .ok_or_else(|| Error::CalDav("Invalid response: no items array".to_string()))?;
 
             for item in items {
                 if let Some(event) = self.parse_google_event(item)? {
@@ -99,14 +99,21 @@ impl CalDavClient {
 
             // Check for next page
             if let Some(next_token) = json["nextPageToken"].as_str() {
-                debug!("Fetched {} events so far, getting next page", all_events.len());
+                debug!(
+                    "Fetched {} events so far, getting next page",
+                    all_events.len()
+                );
                 page_token = Some(next_token.to_string());
             } else {
                 break;
             }
         }
 
-        info!("Fetched {} events for {}", all_events.len(), self.account_id);
+        info!(
+            "Fetched {} events for {}",
+            all_events.len(),
+            self.account_id
+        );
         Ok(all_events)
     }
 
@@ -154,8 +161,15 @@ impl CalDavClient {
 
         // Parse organizer
         let organizer = json["organizer"].as_object().map(|org| Attendee {
-            email: org.get("email").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-            name: org.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            email: org
+                .get("email")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            name: org
+                .get("displayName")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             response_status: Some(AttendeeStatus::Accepted),
             optional: false,
         });
@@ -169,14 +183,12 @@ impl CalDavClient {
                         Some(Attendee {
                             email: att["email"].as_str()?.to_string(),
                             name: att["displayName"].as_str().map(|s| s.to_string()),
-                            response_status: att["responseStatus"].as_str().and_then(|s| {
-                                match s {
-                                    "needsAction" => Some(AttendeeStatus::NeedsAction),
-                                    "declined" => Some(AttendeeStatus::Declined),
-                                    "tentative" => Some(AttendeeStatus::Tentative),
-                                    "accepted" => Some(AttendeeStatus::Accepted),
-                                    _ => None,
-                                }
+                            response_status: att["responseStatus"].as_str().and_then(|s| match s {
+                                "needsAction" => Some(AttendeeStatus::NeedsAction),
+                                "declined" => Some(AttendeeStatus::Declined),
+                                "tentative" => Some(AttendeeStatus::Tentative),
+                                "accepted" => Some(AttendeeStatus::Accepted),
+                                _ => None,
                             }),
                             optional: att["optional"].as_bool().unwrap_or(false),
                         })
@@ -319,7 +331,10 @@ impl CalDavClient {
             )));
         }
 
-        info!("Updated event {} for {}", event.google_event_id, self.account_id);
+        info!(
+            "Updated event {} for {}",
+            event.google_event_id, self.account_id
+        );
         Ok(())
     }
 
@@ -391,14 +406,16 @@ impl CalDavClient {
         }
 
         if !event.attendees.is_empty() {
-            json["attendees"] = serde_json::json!(
-                event.attendees.iter().map(|a| {
+            json["attendees"] = serde_json::json!(event
+                .attendees
+                .iter()
+                .map(|a| {
                     serde_json::json!({
                         "email": a.email,
                         "optional": a.optional
                     })
-                }).collect::<Vec<_>>()
-            );
+                })
+                .collect::<Vec<_>>());
         }
 
         Ok(json)

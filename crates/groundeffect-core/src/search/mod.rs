@@ -72,7 +72,8 @@ impl SearchOptions {
         // Account filter
         if let Some(accounts) = &self.accounts {
             if !accounts.is_empty() {
-                let account_list: Vec<String> = accounts.iter().map(|a| format!("'{}'", a)).collect();
+                let account_list: Vec<String> =
+                    accounts.iter().map(|a| format!("'{}'", a)).collect();
                 conditions.push(format!("account_id IN ({})", account_list.join(", ")));
             }
         }
@@ -131,10 +132,7 @@ pub struct SearchEngine {
 impl SearchEngine {
     /// Create a new search engine
     pub fn new(db: Arc<Database>, embedding: Arc<HybridEmbeddingProvider>) -> Self {
-        Self {
-            db,
-            embedding,
-        }
+        Self { db, embedding }
     }
 
     /// Search emails using hybrid BM25 + vector search
@@ -143,7 +141,10 @@ impl SearchEngine {
         query: &str,
         options: &SearchOptions,
     ) -> Result<Vec<EmailSearchResult>> {
-        info!("Searching emails: query='{}', limit={}", query, options.limit);
+        info!(
+            "Searching emails: query='{}', limit={}",
+            query, options.limit
+        );
 
         let table = self.db.emails_table()?;
         let filter = options.build_filter();
@@ -175,13 +176,15 @@ impl SearchEngine {
         // Batch fetch all emails in a single query
         let fetch_start = std::time::Instant::now();
         let emails = self.db.get_emails_batch(&ids).await?;
-        info!("Batch fetch of {} emails took {:?}", ids.len(), fetch_start.elapsed());
+        info!(
+            "Batch fetch of {} emails took {:?}",
+            ids.len(),
+            fetch_start.elapsed()
+        );
 
         // Build a map for O(1) lookup while preserving RRF order
-        let email_map: std::collections::HashMap<String, _> = emails
-            .into_iter()
-            .map(|e| (e.id.clone(), e))
-            .collect();
+        let email_map: std::collections::HashMap<String, _> =
+            emails.into_iter().map(|e| (e.id.clone(), e)).collect();
 
         // Build results in RRF-ranked order
         let mut results = Vec::with_capacity(top_results.len());
@@ -230,11 +233,16 @@ impl SearchEngine {
         for batch in &batches {
             for row in 0..batch.num_rows() {
                 if let Some(id_col) = batch.column_by_name("id") {
-                    if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
+                    if let Some(id_array) =
+                        id_col.as_any().downcast_ref::<arrow_array::StringArray>()
+                    {
                         let id = id_array.value(row).to_string();
                         // Use _score from BM25 if available, otherwise use rank
                         let score = if let Some(score_col) = batch.column_by_name("_score") {
-                            if let Some(score_array) = score_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
+                            if let Some(score_array) = score_col
+                                .as_any()
+                                .downcast_ref::<arrow_array::Float32Array>()
+                            {
                                 score_array.value(row)
                             } else {
                                 1.0 / (row as f32 + 1.0)
@@ -248,7 +256,11 @@ impl SearchEngine {
             }
         }
 
-        info!("BM25 search took {:?}, found {} results", start.elapsed(), scored_results.len());
+        info!(
+            "BM25 search took {:?}, found {} results",
+            start.elapsed(),
+            scored_results.len()
+        );
         Ok(scored_results)
     }
 
@@ -266,7 +278,7 @@ impl SearchEngine {
 
         // Generate query embedding (may return None if fallback is BM25-only)
         let embed_start = std::time::Instant::now();
-        let query_embedding = match self.embedding.embed(query)? {
+        let query_embedding = match self.embedding.embed(query).await? {
             Some(emb) => emb,
             None => {
                 info!("No embedding available, skipping vector search (BM25-only)");
@@ -293,12 +305,17 @@ impl SearchEngine {
         for batch in &batches {
             for row in 0..batch.num_rows() {
                 if let Some(id_col) = batch.column_by_name("id") {
-                    if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
+                    if let Some(id_array) =
+                        id_col.as_any().downcast_ref::<arrow_array::StringArray>()
+                    {
                         let id = id_array.value(row).to_string();
 
                         // Get distance score - convert to similarity (lower distance = higher similarity)
                         let score = if let Some(dist_col) = batch.column_by_name("_distance") {
-                            if let Some(dist_array) = dist_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
+                            if let Some(dist_array) = dist_col
+                                .as_any()
+                                .downcast_ref::<arrow_array::Float32Array>()
+                            {
                                 1.0 / (1.0 + dist_array.value(row))
                             } else {
                                 1.0 / (row as f32 + 1.0)
@@ -313,7 +330,11 @@ impl SearchEngine {
             }
         }
 
-        info!("Vector search took {:?}, found {} results", start.elapsed(), scored_results.len());
+        info!(
+            "Vector search took {:?}, found {} results",
+            start.elapsed(),
+            scored_results.len()
+        );
         Ok(scored_results)
     }
 
@@ -352,7 +373,10 @@ impl SearchEngine {
         query: &str,
         options: &CalendarSearchOptions,
     ) -> Result<Vec<CalendarSearchResult>> {
-        info!("Searching calendar: query='{}', limit={}", query, options.limit);
+        info!(
+            "Searching calendar: query='{}', limit={}",
+            query, options.limit
+        );
 
         let table = self.db.events_table()?;
         let filter = options.build_filter();
@@ -366,12 +390,7 @@ impl SearchEngine {
         let vector_results = vector_results?;
 
         // Combine using RRF
-        let combined = self.rrf_fusion(
-            &bm25_results,
-            &vector_results,
-            0.5,
-            0.5,
-        );
+        let combined = self.rrf_fusion(&bm25_results, &vector_results, 0.5, 0.5);
 
         // Get top result IDs and scores
         let top_results: Vec<(String, f32)> = combined.into_iter().take(options.limit).collect();
@@ -381,16 +400,17 @@ impl SearchEngine {
         let events = self.db.get_events_batch(&ids).await?;
 
         // Build a map for O(1) lookup while preserving RRF order
-        let event_map: std::collections::HashMap<String, _> = events
-            .into_iter()
-            .map(|e| (e.id.clone(), e))
-            .collect();
+        let event_map: std::collections::HashMap<String, _> =
+            events.into_iter().map(|e| (e.id.clone(), e)).collect();
 
         // Build results in RRF-ranked order
         let mut results = Vec::with_capacity(top_results.len());
         for (id, score) in top_results {
             if let Some(event) = event_map.get(&id) {
-                results.push(CalendarSearchResult { event: event.clone(), score });
+                results.push(CalendarSearchResult {
+                    event: event.clone(),
+                    score,
+                });
             }
         }
 
@@ -427,10 +447,15 @@ impl SearchEngine {
         for batch in &batches {
             for row in 0..batch.num_rows() {
                 if let Some(id_col) = batch.column_by_name("id") {
-                    if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
+                    if let Some(id_array) =
+                        id_col.as_any().downcast_ref::<arrow_array::StringArray>()
+                    {
                         let id = id_array.value(row).to_string();
                         let score = if let Some(score_col) = batch.column_by_name("_score") {
-                            if let Some(score_array) = score_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
+                            if let Some(score_array) = score_col
+                                .as_any()
+                                .downcast_ref::<arrow_array::Float32Array>()
+                            {
                                 score_array.value(row)
                             } else {
                                 1.0 / (row as f32 + 1.0)
@@ -457,7 +482,7 @@ impl SearchEngine {
     ) -> Result<Vec<(String, f32)>> {
         use futures::TryStreamExt;
 
-        let query_embedding = match self.embedding.embed(query)? {
+        let query_embedding = match self.embedding.embed(query).await? {
             Some(emb) => emb,
             None => {
                 info!("No embedding available, skipping vector search (BM25-only)");
@@ -483,11 +508,16 @@ impl SearchEngine {
         for batch in &batches {
             for row in 0..batch.num_rows() {
                 if let Some(id_col) = batch.column_by_name("id") {
-                    if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
+                    if let Some(id_array) =
+                        id_col.as_any().downcast_ref::<arrow_array::StringArray>()
+                    {
                         let id = id_array.value(row).to_string();
 
                         let score = if let Some(dist_col) = batch.column_by_name("_distance") {
-                            if let Some(dist_array) = dist_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
+                            if let Some(dist_array) = dist_col
+                                .as_any()
+                                .downcast_ref::<arrow_array::Float32Array>()
+                            {
                                 1.0 / (1.0 + dist_array.value(row))
                             } else {
                                 1.0 / (row as f32 + 1.0)
@@ -532,7 +562,8 @@ impl CalendarSearchOptions {
 
         if let Some(accounts) = &self.accounts {
             if !accounts.is_empty() {
-                let account_list: Vec<String> = accounts.iter().map(|a| format!("'{}'", a)).collect();
+                let account_list: Vec<String> =
+                    accounts.iter().map(|a| format!("'{}'", a)).collect();
                 conditions.push(format!("account_id IN ({})", account_list.join(", ")));
             }
         }

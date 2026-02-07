@@ -1,7 +1,7 @@
 //! MCP tool implementations
 
-use std::sync::Arc;
 use std::process::Command;
+use std::sync::Arc;
 
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -10,13 +10,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tracing::{debug, info, warn};
 
+use super::protocol::{ToolDefinition, ToolResult};
 use crate::config::{Config, DaemonConfig};
 use crate::db::Database;
 use crate::error::{Error, Result};
-use crate::models::{Account, AccountStatus, SendEmailRequest};
+use crate::models::{Account, AccountStatus, Email, SendEmailRequest};
 use crate::oauth::OAuthManager;
 use crate::search::{CalendarSearchOptions, SearchEngine, SearchOptions};
-use super::protocol::{ToolDefinition, ToolResult};
 
 /// Get all tool definitions
 pub fn get_tool_definitions() -> Vec<ToolDefinition> {
@@ -694,11 +694,15 @@ fn convert_to_html(body: &str) -> String {
 
     // Convert markdown links [text](url) to <a href="url">text</a>
     let md_link = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
-    html = md_link.replace_all(&html, r#"<a href="$2">$1</a>"#).to_string();
+    html = md_link
+        .replace_all(&html, r#"<a href="$2">$1</a>"#)
+        .to_string();
 
     // Convert plain URLs to links (not if preceded by " or > which means already in href)
     let url_pattern = Regex::new(r#"(^|[^">])(https?://[^\s<>"]+)"#).unwrap();
-    html = url_pattern.replace_all(&html, r#"$1<a href="$2">$2</a>"#).to_string();
+    html = url_pattern
+        .replace_all(&html, r#"$1<a href="$2">$2</a>"#)
+        .to_string();
 
     // Convert **bold** to <strong>
     let bold = Regex::new(r"\*\*(.+?)\*\*").unwrap();
@@ -816,7 +820,10 @@ fn build_email_message(
         let html_body = convert_to_html(body);
         let plain_body = strip_html_tags(&html_body);
 
-        message.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n\r\n", boundary));
+        message.push_str(&format!(
+            "Content-Type: multipart/alternative; boundary=\"{}\"\r\n\r\n",
+            boundary
+        ));
 
         // Plain text part
         message.push_str(&format!("--{}\r\n", boundary));
@@ -900,12 +907,12 @@ fn parse_email_headers(raw: &str) -> (std::collections::HashMap<String, String>,
 /// Extract email addresses from a header value like "Name <email>, Name2 <email2>"
 fn parse_email_addresses(header_value: &str) -> Vec<String> {
     use regex::Regex;
-    let email_pattern = Regex::new(r"<([^>]+)>|([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})").unwrap();
+    let email_pattern =
+        Regex::new(r"<([^>]+)>|([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})").unwrap();
 
-    email_pattern.captures_iter(header_value)
-        .filter_map(|cap| {
-            cap.get(1).or(cap.get(2)).map(|m| m.as_str().to_string())
-        })
+    email_pattern
+        .captures_iter(header_value)
+        .filter_map(|cap| cap.get(1).or(cap.get(2)).map(|m| m.as_str().to_string()))
         .collect()
 }
 
@@ -1080,7 +1087,10 @@ impl ToolHandler {
         if let Some(sync_attachments) = args.get("sync_attachments").and_then(|v| v.as_bool()) {
             if account.sync_attachments != sync_attachments {
                 account.sync_attachments = sync_attachments;
-                changes.push(format!("sync_attachments: {} (restart daemon to apply)", sync_attachments));
+                changes.push(format!(
+                    "sync_attachments: {} (restart daemon to apply)",
+                    sync_attachments
+                ));
             }
         }
 
@@ -1207,13 +1217,15 @@ impl ToolHandler {
         let years_to_sync: Option<u32> = if years_to_sync_str.eq_ignore_ascii_case("all") {
             None // No limit
         } else {
-            let years = years_to_sync_str.parse::<u32>()
-                .map_err(|_| Error::InvalidRequest(format!(
-                    "Invalid years_to_sync value '{}'. Use '1'-'20' or 'all'", years_to_sync_str
-                )))?;
+            let years = years_to_sync_str.parse::<u32>().map_err(|_| {
+                Error::InvalidRequest(format!(
+                    "Invalid years_to_sync value '{}'. Use '1'-'20' or 'all'",
+                    years_to_sync_str
+                ))
+            })?;
             if years < 1 || years > 20 {
                 return Err(Error::InvalidRequest(
-                    "years_to_sync must be between 1 and 20, or 'all'".to_string()
+                    "years_to_sync must be between 1 and 20, or 'all'".to_string(),
                 ));
             }
             Some(years)
@@ -1226,8 +1238,12 @@ impl ToolHandler {
         let auth_url = self.oauth.authorization_url(&state);
 
         // Try to bind to the OAuth callback port
-        let listener = TcpListener::bind("127.0.0.1:8085").await
-            .map_err(|e| Error::Other(format!("Failed to start OAuth callback server: {}. Is another instance running?", e)))?;
+        let listener = TcpListener::bind("127.0.0.1:8085").await.map_err(|e| {
+            Error::Other(format!(
+                "Failed to start OAuth callback server: {}. Is another instance running?",
+                e
+            ))
+        })?;
 
         // Open the browser
         if let Err(e) = open::that(&auth_url) {
@@ -1239,26 +1255,32 @@ impl ToolHandler {
         // Wait for callback with timeout (5 minutes)
         let callback_result = tokio::time::timeout(
             std::time::Duration::from_secs(300),
-            self.wait_for_oauth_callback(&listener, &state)
-        ).await;
+            self.wait_for_oauth_callback(&listener, &state),
+        )
+        .await;
 
         let code = match callback_result {
             Ok(Ok(code)) => code,
             Ok(Err(e)) => return Err(e),
-            Err(_) => return Err(Error::Other("OAuth timeout: no callback received within 5 minutes".to_string())),
+            Err(_) => {
+                return Err(Error::Other(
+                    "OAuth timeout: no callback received within 5 minutes".to_string(),
+                ))
+            }
         };
 
         // Exchange code for tokens
         let (tokens, user_info) = self.oauth.exchange_code(&code).await?;
 
         // Store tokens
-        self.oauth.token_provider().store_tokens(&user_info.email, &tokens).await?;
+        self.oauth
+            .token_provider()
+            .store_tokens(&user_info.email, &tokens)
+            .await?;
 
         // Calculate sync_email_since based on years_to_sync
         use chrono::Duration;
-        let sync_since = years_to_sync.map(|years| {
-            Utc::now() - Duration::days(years as i64 * 365)
-        });
+        let sync_since = years_to_sync.map(|years| Utc::now() - Duration::days(years as i64 * 365));
 
         // Check if account already exists
         if let Some(existing) = self.db.get_account(&user_info.email).await? {
@@ -1292,7 +1314,7 @@ impl ToolHandler {
                 sync_email_since: sync_since,
                 oldest_email_synced: None,
                 oldest_event_synced: None,
-                sync_attachments: false,  // Off by default
+                sync_attachments: false, // Off by default
                 estimated_total_emails: None,
             };
             self.db.upsert_account(&account).await?;
@@ -1313,15 +1335,23 @@ impl ToolHandler {
     }
 
     /// Wait for OAuth callback and return the authorization code
-    async fn wait_for_oauth_callback(&self, listener: &TcpListener, expected_state: &str) -> Result<String> {
+    async fn wait_for_oauth_callback(
+        &self,
+        listener: &TcpListener,
+        expected_state: &str,
+    ) -> Result<String> {
         // Accept one connection
-        let (mut socket, _) = listener.accept().await
+        let (mut socket, _) = listener
+            .accept()
+            .await
             .map_err(|e| Error::Other(format!("Failed to accept OAuth callback: {}", e)))?;
 
         // Read the HTTP request
         let mut reader = BufReader::new(&mut socket);
         let mut request_line = String::new();
-        reader.read_line(&mut request_line).await
+        reader
+            .read_line(&mut request_line)
+            .await
             .map_err(|e| Error::Other(format!("Failed to read OAuth callback: {}", e)))?;
 
         // Parse the request to extract code and state
@@ -1331,7 +1361,9 @@ impl ToolHandler {
         if received_state != expected_state {
             let response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n<h1>Error: Invalid state</h1>";
             let _ = socket.write_all(response.as_bytes()).await;
-            return Err(Error::Other("OAuth state mismatch - possible CSRF attack".to_string()));
+            return Err(Error::Other(
+                "OAuth state mismatch - possible CSRF attack".to_string(),
+            ));
         }
 
         // Send success response to browser
@@ -1368,7 +1400,8 @@ Content-Type: text/html; charset=utf-8
         }
 
         // Parse query string
-        let query_start = path.find('?')
+        let query_start = path
+            .find('?')
             .ok_or_else(|| Error::Other("No query string in callback".to_string()))?;
         let query = &path[query_start + 1..];
 
@@ -1380,17 +1413,26 @@ Content-Type: text/html; charset=utf-8
             let key = kv.next().unwrap_or("");
             let value = kv.next().unwrap_or("");
             match key {
-                "code" => code = Some(urlencoding::decode(value)
-                    .map_err(|e| Error::Other(format!("Failed to decode code: {}", e)))?
-                    .into_owned()),
-                "state" => state = Some(urlencoding::decode(value)
-                    .map_err(|e| Error::Other(format!("Failed to decode state: {}", e)))?
-                    .into_owned()),
+                "code" => {
+                    code = Some(
+                        urlencoding::decode(value)
+                            .map_err(|e| Error::Other(format!("Failed to decode code: {}", e)))?
+                            .into_owned(),
+                    )
+                }
+                "state" => {
+                    state = Some(
+                        urlencoding::decode(value)
+                            .map_err(|e| Error::Other(format!("Failed to decode state: {}", e)))?
+                            .into_owned(),
+                    )
+                }
                 _ => {}
             }
         }
 
-        let code = code.ok_or_else(|| Error::Other("No authorization code in callback".to_string()))?;
+        let code =
+            code.ok_or_else(|| Error::Other("No authorization code in callback".to_string()))?;
         let state = state.ok_or_else(|| Error::Other("No state in callback".to_string()))?;
 
         Ok((code, state))
@@ -1419,14 +1461,12 @@ Content-Type: text/html; charset=utf-8
         }
 
         // Resolve account aliases
-        let accounts = args["accounts"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .filter_map(|id| self.config.resolve_account(id))
-                    .collect::<Vec<_>>()
-            });
+        let accounts = args["accounts"].as_array().map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|id| self.config.resolve_account(id))
+                .collect::<Vec<_>>()
+        });
 
         // Parse date filters (format: YYYY-MM-DD) with timezone support
         let tz: Tz = self.config.general.timezone.parse().unwrap_or(Tz::UTC);
@@ -1466,7 +1506,13 @@ Content-Type: text/html; charset=utf-8
         // If no account filter, show all accounts as searched
         let accounts_searched = match &options.accounts {
             Some(accts) => accts.clone(),
-            None => self.db.list_accounts().await?.into_iter().map(|a| a.id).collect(),
+            None => self
+                .db
+                .list_accounts()
+                .await?
+                .into_iter()
+                .map(|a| a.id)
+                .collect(),
         };
 
         Ok(serde_json::json!({
@@ -1495,32 +1541,41 @@ Content-Type: text/html; charset=utf-8
                     .and_then(|id| self.config.resolve_account(id))
             });
 
-        info!("Listing recent emails: account={:?}, limit={}", account_id, limit);
+        info!(
+            "Listing recent emails: account={:?}, limit={}",
+            account_id, limit
+        );
 
         let start = std::time::Instant::now();
-        let emails = self.db.list_recent_emails(account_id.as_deref(), limit).await?;
+        let emails = self
+            .db
+            .list_recent_emails(account_id.as_deref(), limit)
+            .await?;
         let query_time = start.elapsed().as_millis();
 
         // Convert to summaries
-        let results: Vec<_> = emails.iter().map(|e| {
-            serde_json::json!({
-                "id": e.id,
-                "subject": e.subject,
-                "from": e.from.to_string_full(),
-                "date": e.date.to_rfc3339(),
-                "snippet": e.snippet,
-                "folder": e.folder,
-                "is_read": e.is_read(),
-                "has_attachments": e.has_attachments(),
-                "attachments": e.attachments.iter().map(|a| serde_json::json!({
-                    "id": a.id,
-                    "filename": a.filename,
-                    "mime_type": a.mime_type,
-                    "size_human": a.size_human(),
-                    "downloaded": a.downloaded
-                })).collect::<Vec<_>>()
+        let results: Vec<_> = emails
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "id": e.id,
+                    "subject": e.subject,
+                    "from": e.from.to_string_full(),
+                    "date": e.date.to_rfc3339(),
+                    "snippet": e.snippet,
+                    "folder": e.folder,
+                    "is_read": e.is_read(),
+                    "has_attachments": e.has_attachments(),
+                    "attachments": e.attachments.iter().map(|a| serde_json::json!({
+                        "id": a.id,
+                        "filename": a.filename,
+                        "mime_type": a.mime_type,
+                        "size_human": a.size_human(),
+                        "downloaded": a.downloaded
+                    })).collect::<Vec<_>>()
+                })
             })
-        }).collect();
+            .collect();
 
         Ok(serde_json::json!({
             "emails": results,
@@ -1544,20 +1599,14 @@ Content-Type: text/html; charset=utf-8
             .await?
             .ok_or_else(|| Error::EmailNotFound(id.to_string()))?;
 
-        // Get body text: prefer plain, extract from HTML if needed
-        let body = if !email.body_plain.trim().is_empty() {
-            email.body_plain.clone()
-        } else if let Some(html) = &email.body_html {
-            html2text::from_read(html.as_bytes(), 80).unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let body = email.resolved_body();
 
         // Check if truncation needed
         let total_chars = body.len();
         let (body_text, truncated) = if total_chars > Self::MAX_BODY_CHARS {
             // Truncate at char boundary
-            let truncated_body = body.char_indices()
+            let truncated_body = body
+                .char_indices()
                 .take_while(|(i, _)| *i < Self::MAX_BODY_CHARS)
                 .map(|(_, c)| c)
                 .collect::<String>();
@@ -1618,25 +1667,22 @@ Content-Type: text/html; charset=utf-8
             .await?;
 
         if emails.is_empty() {
-            return Err(Error::Other(format!("No emails found for thread {}", thread_id)));
+            return Err(Error::Other(format!(
+                "No emails found for thread {}",
+                thread_id
+            )));
         }
 
         // Format each email in the thread
         let mut messages = Vec::with_capacity(emails.len());
         for email in &emails {
-            // Get body text: prefer plain, extract from HTML if needed
-            let body = if !email.body_plain.trim().is_empty() {
-                email.body_plain.clone()
-            } else if let Some(html) = &email.body_html {
-                html2text::from_read(html.as_bytes(), 80).unwrap_or_default()
-            } else {
-                String::new()
-            };
+            let body = email.resolved_body();
 
             // Truncate if needed
             let total_chars = body.len();
             let (body_text, truncated) = if total_chars > Self::MAX_BODY_CHARS {
-                let truncated_body = body.char_indices()
+                let truncated_body = body
+                    .char_indices()
                     .take_while(|(i, _)| *i < Self::MAX_BODY_CHARS)
                     .map(|(_, c)| c)
                     .collect::<String>();
@@ -1688,12 +1734,15 @@ Content-Type: text/html; charset=utf-8
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing from_account".to_string()))?;
 
-        let from_email = self.config.resolve_account(from_account)
+        let from_email = self
+            .config
+            .resolve_account(from_account)
             .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", from_account)))?;
 
         // Get account display name from database
-        let account = self.db.get_account(&from_email).await?
-            .ok_or_else(|| Error::InvalidRequest(format!("Account not found in database: {}", from_email)))?;
+        let account = self.db.get_account(&from_email).await?.ok_or_else(|| {
+            Error::InvalidRequest(format!("Account not found in database: {}", from_email))
+        })?;
         let display_name = &account.display_name;
 
         let to: Vec<String> = args["to"]
@@ -1704,7 +1753,9 @@ Content-Type: text/html; charset=utf-8
             .collect();
 
         if to.is_empty() {
-            return Err(Error::InvalidRequest("At least one recipient required".to_string()));
+            return Err(Error::InvalidRequest(
+                "At least one recipient required".to_string(),
+            ));
         }
 
         let subject = args["subject"]
@@ -1717,12 +1768,20 @@ Content-Type: text/html; charset=utf-8
 
         let cc: Vec<String> = args["cc"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let bcc: Vec<String> = args["bcc"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Build reply headers if replying
@@ -1799,7 +1858,10 @@ Content-Type: text/html; charset=utf-8
             if !response.status().is_success() {
                 let status = response.status();
                 let error_body = response.text().await.unwrap_or_default();
-                return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+                return Err(Error::Other(format!(
+                    "Gmail API error {}: {}",
+                    status, error_body
+                )));
             }
 
             let result: serde_json::Value = response.json().await?;
@@ -1831,7 +1893,10 @@ Content-Type: text/html; charset=utf-8
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            return Err(Error::Other(format!(
+                "Gmail API error {}: {}",
+                status, error_body
+            )));
         }
 
         let result: serde_json::Value = response.json().await?;
@@ -1962,19 +2027,17 @@ Content-Type: text/html; charset=utf-8
         if is_text && attachment.size < 1_000_000 {
             // Read and return text content (up to 1MB)
             match std::fs::read_to_string(local_path) {
-                Ok(content) => {
-                    Ok(serde_json::json!({
-                        "attachment": {
-                            "id": attachment.id,
-                            "filename": attachment.filename,
-                            "mime_type": attachment.mime_type,
-                            "size": attachment.size,
-                            "size_human": attachment.size_human()
-                        },
-                        "content_type": "text",
-                        "content": content
-                    }))
-                }
+                Ok(content) => Ok(serde_json::json!({
+                    "attachment": {
+                        "id": attachment.id,
+                        "filename": attachment.filename,
+                        "mime_type": attachment.mime_type,
+                        "size": attachment.size,
+                        "size_human": attachment.size_human()
+                    },
+                    "content_type": "text",
+                    "content": content
+                })),
                 Err(e) => {
                     // Fall back to returning path if read fails
                     Ok(serde_json::json!({
@@ -2022,12 +2085,15 @@ Content-Type: text/html; charset=utf-8
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing from_account".to_string()))?;
 
-        let from_email = self.config.resolve_account(from_account)
+        let from_email = self
+            .config
+            .resolve_account(from_account)
             .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", from_account)))?;
 
         // Get account display name from database
-        let account = self.db.get_account(&from_email).await?
-            .ok_or_else(|| Error::InvalidRequest(format!("Account not found in database: {}", from_email)))?;
+        let account = self.db.get_account(&from_email).await?.ok_or_else(|| {
+            Error::InvalidRequest(format!("Account not found in database: {}", from_email))
+        })?;
         let display_name = &account.display_name;
 
         let to: Vec<String> = args["to"]
@@ -2038,7 +2104,9 @@ Content-Type: text/html; charset=utf-8
             .collect();
 
         if to.is_empty() {
-            return Err(Error::InvalidRequest("At least one recipient required".to_string()));
+            return Err(Error::InvalidRequest(
+                "At least one recipient required".to_string(),
+            ));
         }
 
         let subject = args["subject"]
@@ -2051,12 +2119,20 @@ Content-Type: text/html; charset=utf-8
 
         let cc: Vec<String> = args["cc"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let bcc: Vec<String> = args["bcc"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Build reply headers if replying
@@ -2129,7 +2205,10 @@ Content-Type: text/html; charset=utf-8
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            return Err(Error::Other(format!(
+                "Gmail API error {}: {}",
+                status, error_body
+            )));
         }
 
         let result: serde_json::Value = response.json().await?;
@@ -2154,7 +2233,9 @@ Content-Type: text/html; charset=utf-8
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing account".to_string()))?;
 
-        let from_email = self.config.resolve_account(account)
+        let from_email = self
+            .config
+            .resolve_account(account)
             .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
 
         let limit = args["limit"].as_u64().unwrap_or(20) as usize;
@@ -2174,7 +2255,10 @@ Content-Type: text/html; charset=utf-8
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            return Err(Error::Other(format!(
+                "Gmail API error {}: {}",
+                status, error_body
+            )));
         }
 
         let result: serde_json::Value = response.json().await?;
@@ -2232,7 +2316,9 @@ Content-Type: text/html; charset=utf-8
             }
         }
 
-        let total = result["resultSizeEstimate"].as_u64().unwrap_or(drafts.len() as u64);
+        let total = result["resultSizeEstimate"]
+            .as_u64()
+            .unwrap_or(drafts.len() as u64);
 
         Ok(serde_json::json!({
             "drafts": drafts,
@@ -2250,7 +2336,9 @@ Content-Type: text/html; charset=utf-8
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing draft_id".to_string()))?;
 
-        let from_email = self.config.resolve_account(account)
+        let from_email = self
+            .config
+            .resolve_account(account)
             .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
 
         let access_token = self.oauth.get_valid_token(&from_email).await?;
@@ -2268,7 +2356,10 @@ Content-Type: text/html; charset=utf-8
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            return Err(Error::Other(format!(
+                "Gmail API error {}: {}",
+                status, error_body
+            )));
         }
 
         let draft_data: serde_json::Value = response.json().await?;
@@ -2303,13 +2394,17 @@ Content-Type: text/html; charset=utf-8
             body: &mut String,
             body_html: &mut String,
         ) {
-            use base64::{Engine, engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD}};
+            use base64::{
+                engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
+                Engine,
+            };
             let mime_type = part["mimeType"].as_str().unwrap_or("");
 
             if mime_type == "text/plain" && body.is_empty() {
                 if let Some(body_data) = part["body"]["data"].as_str() {
                     // Gmail uses URL-safe base64 - try with padding first, then without
-                    let decoded = URL_SAFE.decode(body_data)
+                    let decoded = URL_SAFE
+                        .decode(body_data)
                         .or_else(|_| URL_SAFE_NO_PAD.decode(body_data));
                     if let Ok(decoded) = decoded {
                         if let Ok(text) = String::from_utf8(decoded) {
@@ -2319,7 +2414,8 @@ Content-Type: text/html; charset=utf-8
                 }
             } else if mime_type == "text/html" && body_html.is_empty() {
                 if let Some(body_data) = part["body"]["data"].as_str() {
-                    let decoded = URL_SAFE.decode(body_data)
+                    let decoded = URL_SAFE
+                        .decode(body_data)
                         .or_else(|_| URL_SAFE_NO_PAD.decode(body_data));
                     if let Ok(decoded) = decoded {
                         if let Ok(text) = String::from_utf8(decoded) {
@@ -2341,10 +2437,7 @@ Content-Type: text/html; charset=utf-8
         let payload = &draft_data["message"]["payload"];
         extract_body_recursive(payload, &mut body, &mut body_html);
 
-        // If we only have HTML, generate plain text version
-        if body.is_empty() && !body_html.is_empty() {
-            body = strip_html_tags(&body_html);
-        }
+        body = Email::body_for_indexing_and_display(&body, Some(&body_html));
 
         Ok(serde_json::json!({
             "draft_id": draft_id,
@@ -2369,12 +2462,15 @@ Content-Type: text/html; charset=utf-8
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing draft_id".to_string()))?;
 
-        let from_email = self.config.resolve_account(account)
+        let from_email = self
+            .config
+            .resolve_account(account)
             .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
 
         // Get account display name from database
-        let db_account = self.db.get_account(&from_email).await?
-            .ok_or_else(|| Error::InvalidRequest(format!("Account not found in database: {}", from_email)))?;
+        let db_account = self.db.get_account(&from_email).await?.ok_or_else(|| {
+            Error::InvalidRequest(format!("Account not found in database: {}", from_email))
+        })?;
         let display_name = &db_account.display_name;
 
         let access_token = self.oauth.get_valid_token(&from_email).await?;
@@ -2393,7 +2489,10 @@ Content-Type: text/html; charset=utf-8
         if !existing_response.status().is_success() {
             let status = existing_response.status();
             let error_body = existing_response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            return Err(Error::Other(format!(
+                "Gmail API error {}: {}",
+                status, error_body
+            )));
         }
 
         let existing: serde_json::Value = existing_response.json().await?;
@@ -2420,13 +2519,17 @@ Content-Type: text/html; charset=utf-8
 
         // Recursively extract text/plain body from potentially nested multipart structures
         fn extract_text_body_recursive(part: &serde_json::Value) -> Option<String> {
-            use base64::{Engine, engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD}};
+            use base64::{
+                engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
+                Engine,
+            };
             let mime_type = part["mimeType"].as_str().unwrap_or("");
 
             if mime_type == "text/plain" {
                 if let Some(body_data) = part["body"]["data"].as_str() {
                     // Gmail uses URL-safe base64 - try with padding first, then without
-                    let decoded = URL_SAFE.decode(body_data)
+                    let decoded = URL_SAFE
+                        .decode(body_data)
                         .or_else(|_| URL_SAFE_NO_PAD.decode(body_data));
                     if let Ok(decoded) = decoded {
                         if let Ok(text) = String::from_utf8(decoded) {
@@ -2455,7 +2558,11 @@ Content-Type: text/html; charset=utf-8
         // Use provided values or fall back to existing
         let to: Vec<String> = args["to"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or(existing_to);
 
         let subject = args["subject"]
@@ -2470,12 +2577,20 @@ Content-Type: text/html; charset=utf-8
 
         let cc: Vec<String> = args["cc"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or(existing_cc);
 
         let bcc: Vec<String> = args["bcc"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Detect if HTML formatting is needed
@@ -2516,7 +2631,10 @@ Content-Type: text/html; charset=utf-8
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            return Err(Error::Other(format!(
+                "Gmail API error {}: {}",
+                status, error_body
+            )));
         }
 
         let result: serde_json::Value = response.json().await?;
@@ -2543,7 +2661,9 @@ Content-Type: text/html; charset=utf-8
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing draft_id".to_string()))?;
 
-        let from_email = self.config.resolve_account(account)
+        let from_email = self
+            .config
+            .resolve_account(account)
             .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
 
         let access_token = self.oauth.get_valid_token(&from_email).await?;
@@ -2562,7 +2682,10 @@ Content-Type: text/html; charset=utf-8
         if !draft_response.status().is_success() {
             let status = draft_response.status();
             let error_body = draft_response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            return Err(Error::Other(format!(
+                "Gmail API error {}: {}",
+                status, error_body
+            )));
         }
 
         let draft_data: serde_json::Value = draft_response.json().await?;
@@ -2598,7 +2721,10 @@ Content-Type: text/html; charset=utf-8
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            return Err(Error::Other(format!(
+                "Gmail API error {}: {}",
+                status, error_body
+            )));
         }
 
         let result: serde_json::Value = response.json().await?;
@@ -2626,7 +2752,9 @@ Content-Type: text/html; charset=utf-8
             .as_str()
             .ok_or_else(|| Error::InvalidRequest("Missing draft_id".to_string()))?;
 
-        let from_email = self.config.resolve_account(account)
+        let from_email = self
+            .config
+            .resolve_account(account)
             .ok_or_else(|| Error::InvalidRequest(format!("Unknown account: {}", account)))?;
 
         let access_token = self.oauth.get_valid_token(&from_email).await?;
@@ -2644,7 +2772,10 @@ Content-Type: text/html; charset=utf-8
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!("Gmail API error {}: {}", status, error_body)));
+            return Err(Error::Other(format!(
+                "Gmail API error {}: {}",
+                status, error_body
+            )));
         }
 
         info!("Draft deleted successfully: {}", draft_id);
@@ -2664,14 +2795,12 @@ Content-Type: text/html; charset=utf-8
         let limit = args["limit"].as_u64().unwrap_or(10) as usize;
 
         // Resolve account aliases
-        let accounts = args["accounts"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .filter_map(|id| self.config.resolve_account(id))
-                    .collect::<Vec<_>>()
-            });
+        let accounts = args["accounts"].as_array().map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|id| self.config.resolve_account(id))
+                .collect::<Vec<_>>()
+        });
 
         // Parse date filters (format: YYYY-MM-DD) with timezone support
         let tz: Tz = self.config.general.timezone.parse().unwrap_or(Tz::UTC);
@@ -2707,7 +2836,13 @@ Content-Type: text/html; charset=utf-8
         // If no account filter, show all accounts as searched
         let accounts_searched = match &options.accounts {
             Some(accts) => accts.clone(),
-            None => self.db.list_accounts().await?.into_iter().map(|a| a.id).collect(),
+            None => self
+                .db
+                .list_accounts()
+                .await?
+                .into_iter()
+                .map(|a| a.id)
+                .collect(),
         };
 
         Ok(serde_json::json!({
@@ -2737,7 +2872,10 @@ Content-Type: text/html; charset=utf-8
     async fn list_calendar_events(&self, args: &Value) -> Result<Value> {
         // Get date range using user's timezone for "today"
         let tz: Tz = self.config.general.timezone.parse().unwrap_or(Tz::UTC);
-        let today = chrono::Utc::now().with_timezone(&tz).format("%Y-%m-%d").to_string();
+        let today = chrono::Utc::now()
+            .with_timezone(&tz)
+            .format("%Y-%m-%d")
+            .to_string();
         let from = args["from"].as_str().unwrap_or(&today).to_string();
 
         let to = match args["to"].as_str() {
@@ -2745,28 +2883,26 @@ Content-Type: text/html; charset=utf-8
             None => {
                 let from_date = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
                     .unwrap_or_else(|_| chrono::Utc::now().with_timezone(&tz).date_naive());
-                (from_date + chrono::Duration::days(7)).format("%Y-%m-%d").to_string()
+                (from_date + chrono::Duration::days(7))
+                    .format("%Y-%m-%d")
+                    .to_string()
             }
         };
 
         let limit = args["limit"].as_u64().unwrap_or(50) as usize;
 
         // Resolve account filter if provided
-        let accounts: Option<Vec<String>> = args["accounts"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .filter_map(|id| self.config.resolve_account(id))
-                    .collect()
-            });
+        let accounts: Option<Vec<String>> = args["accounts"].as_array().map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|id| self.config.resolve_account(id))
+                .collect()
+        });
 
-        let events = self.db.list_events_in_range(
-            accounts.as_deref(),
-            &from,
-            &to,
-            limit.min(200),
-        ).await?;
+        let events = self
+            .db
+            .list_events_in_range(accounts.as_deref(), &from, &to, limit.min(200))
+            .await?;
 
         // Convert to JSON-friendly format with full attendee/organizer data
         let results: Vec<serde_json::Value> = events.iter().map(|e| {
@@ -2810,14 +2946,12 @@ Content-Type: text/html; charset=utf-8
     /// List calendars for all accounts (or filtered accounts)
     async fn list_calendars(&self, args: &Value) -> Result<Value> {
         // Resolve account filter if provided
-        let account_filter: Option<Vec<String>> = args["accounts"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .filter_map(|id| self.config.resolve_account(id))
-                    .collect()
-            });
+        let account_filter: Option<Vec<String>> = args["accounts"].as_array().map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|id| self.config.resolve_account(id))
+                .collect()
+        });
 
         let accounts = self.db.list_accounts().await?;
         let mut all_calendars = Vec::new();
@@ -2872,7 +3006,10 @@ Content-Type: text/html; charset=utf-8
                 Ok(resp) => {
                     let status = resp.status();
                     let body = resp.text().await.unwrap_or_default();
-                    warn!("Failed to list calendars for {}: {} - {}", account.id, status, body);
+                    warn!(
+                        "Failed to list calendars for {}: {} - {}",
+                        account.id, status, body
+                    );
                 }
                 Err(e) => {
                     warn!("Failed to list calendars for {}: {}", account.id, e);
@@ -2915,7 +3052,11 @@ Content-Type: text/html; charset=utf-8
         let location = args["location"].as_str();
         let attendees: Vec<String> = args["attendees"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Build the event object for Google Calendar API
@@ -2940,9 +3081,10 @@ Content-Type: text/html; charset=utf-8
         }
 
         if !attendees.is_empty() {
-            event_body["attendees"] = serde_json::json!(
-                attendees.iter().map(|email| serde_json::json!({"email": email})).collect::<Vec<_>>()
-            );
+            event_body["attendees"] = serde_json::json!(attendees
+                .iter()
+                .map(|email| serde_json::json!({"email": email}))
+                .collect::<Vec<_>>());
         }
 
         // Get access token
@@ -3001,9 +3143,10 @@ Content-Type: text/html; charset=utf-8
 
         // Try to read daemon's progress file for live sync progress
         let progress_file = self.config.sync_progress_file();
-        let sync_progress: Option<Vec<crate::sync::AccountSyncState>> = std::fs::read_to_string(&progress_file)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok());
+        let sync_progress: Option<Vec<crate::sync::AccountSyncState>> =
+            std::fs::read_to_string(&progress_file)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok());
 
         let mut account_stats = Vec::new();
         let mut total_emails = 0u64;
@@ -3015,8 +3158,11 @@ Content-Type: text/html; charset=utf-8
         for account in &accounts {
             let email_count = self.db.count_emails(Some(&account.id)).await?;
             let event_count = self.db.count_events(Some(&account.id)).await?;
-            let (att_total, att_downloaded, att_size) =
-                self.db.get_attachment_stats(&account.id).await.unwrap_or((0, 0, 0));
+            let (att_total, att_downloaded, att_size) = self
+                .db
+                .get_attachment_stats(&account.id)
+                .await
+                .unwrap_or((0, 0, 0));
 
             total_emails += email_count;
             total_events += event_count;
@@ -3031,18 +3177,21 @@ Content-Type: text/html; charset=utf-8
 
             // Build sync progress if available
             let (is_syncing, sync_progress_json) = if let Some(progress_state) = live_progress {
-                let progress_json = progress_state.initial_sync_progress.as_ref().map(|progress| {
-                    serde_json::json!({
-                        "phase": format!("{:?}", progress.phase),
-                        "emails_synced": progress.emails_synced,
-                        "total_emails_estimated": progress.total_emails_estimated,
-                        "events_synced": progress.events_synced,
-                        "total_events_estimated": progress.total_events_estimated,
-                        "percentage_complete": progress.percentage_complete(),
-                        "emails_per_second": progress.emails_per_second,
-                        "estimated_seconds_remaining": progress.estimated_seconds_remaining()
-                    })
-                });
+                let progress_json = progress_state
+                    .initial_sync_progress
+                    .as_ref()
+                    .map(|progress| {
+                        serde_json::json!({
+                            "phase": format!("{:?}", progress.phase),
+                            "emails_synced": progress.emails_synced,
+                            "total_emails_estimated": progress.total_emails_estimated,
+                            "events_synced": progress.events_synced,
+                            "total_events_estimated": progress.total_events_estimated,
+                            "percentage_complete": progress.percentage_complete(),
+                            "emails_per_second": progress.emails_per_second,
+                            "estimated_seconds_remaining": progress.estimated_seconds_remaining()
+                        })
+                    });
                 (progress_state.is_syncing, progress_json)
             } else {
                 (false, None)
@@ -3151,7 +3300,8 @@ Content-Type: text/html; charset=utf-8
             .await?
             .ok_or_else(|| Error::AccountNotFound(email.to_string()))?;
 
-        let current_sync_from = account.sync_email_since
+        let current_sync_from = account
+            .sync_email_since
             .unwrap_or_else(|| Utc::now() - Duration::days(90));
         let oldest_email_synced = account.oldest_email_synced;
         let oldest_event_synced = account.oldest_event_synced;
@@ -3159,8 +3309,11 @@ Content-Type: text/html; charset=utf-8
         let event_count = self.db.count_events(Some(email)).await?;
 
         // Get attachment stats
-        let (total_attachments, downloaded_attachments, attachment_size) =
-            self.db.get_attachment_stats(email).await.unwrap_or((0, 0, 0));
+        let (total_attachments, downloaded_attachments, attachment_size) = self
+            .db
+            .get_attachment_stats(email)
+            .await
+            .unwrap_or((0, 0, 0));
 
         Ok(serde_json::json!({
             "account": email,
@@ -3258,11 +3411,9 @@ Content-Type: text/html; charset=utf-8
     async fn sync_extend(&self, email: &str, args: &Value) -> Result<Value> {
         use chrono::Duration;
 
-        let target_date = args["target_date"]
-            .as_str()
-            .ok_or_else(|| Error::InvalidRequest(
-                "Missing target_date. Use YYYY-MM-DD format.".to_string()
-            ))?;
+        let target_date = args["target_date"].as_str().ok_or_else(|| {
+            Error::InvalidRequest("Missing target_date. Use YYYY-MM-DD format.".to_string())
+        })?;
 
         let account = self
             .db
@@ -3270,12 +3421,15 @@ Content-Type: text/html; charset=utf-8
             .await?
             .ok_or_else(|| Error::AccountNotFound(email.to_string()))?;
 
-        let current_sync_from = account.sync_email_since
+        let current_sync_from = account
+            .sync_email_since
             .unwrap_or_else(|| Utc::now() - Duration::days(90));
 
         // Parse target date
-        let parsed_date = chrono::NaiveDate::parse_from_str(target_date, "%Y-%m-%d")
-            .map_err(|e| Error::InvalidRequest(format!("Invalid date format: {}. Use YYYY-MM-DD", e)))?;
+        let parsed_date =
+            chrono::NaiveDate::parse_from_str(target_date, "%Y-%m-%d").map_err(|e| {
+                Error::InvalidRequest(format!("Invalid date format: {}. Use YYYY-MM-DD", e))
+            })?;
 
         let target_datetime = parsed_date
             .and_hms_opt(0, 0, 0)
@@ -3316,15 +3470,15 @@ Content-Type: text/html; charset=utf-8
 
     /// Force sync to resume from a specific date
     async fn sync_resume_from(&self, email: &str, args: &Value) -> Result<Value> {
-        let target_date = args["target_date"]
-            .as_str()
-            .ok_or_else(|| Error::InvalidRequest(
-                "Missing target_date. Use YYYY-MM-DD format.".to_string()
-            ))?;
+        let target_date = args["target_date"].as_str().ok_or_else(|| {
+            Error::InvalidRequest("Missing target_date. Use YYYY-MM-DD format.".to_string())
+        })?;
 
         // Parse target date
-        let parsed_date = chrono::NaiveDate::parse_from_str(target_date, "%Y-%m-%d")
-            .map_err(|e| Error::InvalidRequest(format!("Invalid date format: {}. Use YYYY-MM-DD", e)))?;
+        let parsed_date =
+            chrono::NaiveDate::parse_from_str(target_date, "%Y-%m-%d").map_err(|e| {
+                Error::InvalidRequest(format!("Invalid date format: {}. Use YYYY-MM-DD", e))
+            })?;
 
         let target_datetime = parsed_date
             .and_hms_opt(0, 0, 0)
@@ -3372,8 +3526,11 @@ Content-Type: text/html; charset=utf-8
         info!("Checking pending attachments for {}", email);
 
         // Get attachment stats
-        let (total_attachments, downloaded_attachments, _) =
-            self.db.get_attachment_stats(email).await.unwrap_or((0, 0, 0));
+        let (total_attachments, downloaded_attachments, _) = self
+            .db
+            .get_attachment_stats(email)
+            .await
+            .unwrap_or((0, 0, 0));
         let pending_count = total_attachments - downloaded_attachments;
 
         if pending_count == 0 {
@@ -3428,7 +3585,8 @@ Content-Type: text/html; charset=utf-8
         let current_exe = std::env::current_exe()
             .map_err(|e| Error::Other(format!("Failed to get current executable path: {}", e)))?;
 
-        let exe_dir = current_exe.parent()
+        let exe_dir = current_exe
+            .parent()
             .ok_or_else(|| Error::Other("Failed to get executable directory".to_string()))?;
 
         let daemon_path = exe_dir.join("groundeffect-daemon");
@@ -3530,19 +3688,28 @@ Content-Type: text/html; charset=utf-8
                 config_changed = true;
             }
         }
-        if let Some(interval) = arguments.get("email_poll_interval").and_then(|v| v.as_u64()) {
+        if let Some(interval) = arguments
+            .get("email_poll_interval")
+            .and_then(|v| v.as_u64())
+        {
             if daemon_config.email_poll_interval_secs != interval {
                 daemon_config.email_poll_interval_secs = interval;
                 config_changed = true;
             }
         }
-        if let Some(interval) = arguments.get("calendar_poll_interval").and_then(|v| v.as_u64()) {
+        if let Some(interval) = arguments
+            .get("calendar_poll_interval")
+            .and_then(|v| v.as_u64())
+        {
             if daemon_config.calendar_poll_interval_secs != interval {
                 daemon_config.calendar_poll_interval_secs = interval;
                 config_changed = true;
             }
         }
-        if let Some(max) = arguments.get("max_concurrent_fetches").and_then(|v| v.as_u64()) {
+        if let Some(max) = arguments
+            .get("max_concurrent_fetches")
+            .and_then(|v| v.as_u64())
+        {
             if daemon_config.max_concurrent_fetches != max as usize {
                 daemon_config.max_concurrent_fetches = max as usize;
                 config_changed = true;
@@ -3610,7 +3777,9 @@ Content-Type: text/html; charset=utf-8
                     "log_file": if daemon_config.logging_enabled { Some("~/.local/share/groundeffect/logs/daemon.log") } else { None }
                 }));
             } else {
-                return Err(Error::Other("Daemon failed to start via launchctl. Check logs for errors.".to_string()));
+                return Err(Error::Other(
+                    "Daemon failed to start via launchctl. Check logs for errors.".to_string(),
+                ));
             }
         }
 
@@ -3643,9 +3812,18 @@ Content-Type: text/html; charset=utf-8
         }
 
         // Pass settings via environment variables
-        cmd.env("GROUNDEFFECT_EMAIL_POLL_INTERVAL", daemon_config.email_poll_interval_secs.to_string());
-        cmd.env("GROUNDEFFECT_CALENDAR_POLL_INTERVAL", daemon_config.calendar_poll_interval_secs.to_string());
-        cmd.env("GROUNDEFFECT_MAX_CONCURRENT_FETCHES", daemon_config.max_concurrent_fetches.to_string());
+        cmd.env(
+            "GROUNDEFFECT_EMAIL_POLL_INTERVAL",
+            daemon_config.email_poll_interval_secs.to_string(),
+        );
+        cmd.env(
+            "GROUNDEFFECT_CALENDAR_POLL_INTERVAL",
+            daemon_config.calendar_poll_interval_secs.to_string(),
+        );
+        cmd.env(
+            "GROUNDEFFECT_MAX_CONCURRENT_FETCHES",
+            daemon_config.max_concurrent_fetches.to_string(),
+        );
 
         // Spawn the daemon
         let child = cmd
@@ -3686,7 +3864,9 @@ Content-Type: text/html; charset=utf-8
         } else {
             // Clean up PID file if daemon didn't start
             let _ = std::fs::remove_file(&pid_file);
-            Err(Error::Other("Daemon started but exited immediately. Check logs for errors.".to_string()))
+            Err(Error::Other(
+                "Daemon started but exited immediately. Check logs for errors.".to_string(),
+            ))
         }
     }
 
@@ -3828,7 +4008,9 @@ Content-Type: text/html; charset=utf-8
                     }
                 }));
             } else {
-                return Err(Error::Other("Daemon failed to restart via launchctl".to_string()));
+                return Err(Error::Other(
+                    "Daemon failed to restart via launchctl".to_string(),
+                ));
             }
         }
 
@@ -3885,20 +4067,18 @@ Content-Type: text/html; charset=utf-8
 
                 Ok(process_info)
             }
-            None => {
-                Ok(serde_json::json!({
-                    "running": false,
-                    "status": "stopped",
-                    "message": "Daemon is not running. Use manage_daemon with action: 'start' to start it.",
-                    "settings": {
-                        "logging_enabled": daemon_config.logging_enabled,
-                        "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
-                        "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
-                        "max_concurrent_fetches": daemon_config.max_concurrent_fetches
-                    },
-                    "launchd_agent_installed": launchd_installed
-                }))
-            }
+            None => Ok(serde_json::json!({
+                "running": false,
+                "status": "stopped",
+                "message": "Daemon is not running. Use manage_daemon with action: 'start' to start it.",
+                "settings": {
+                    "logging_enabled": daemon_config.logging_enabled,
+                    "email_poll_interval_secs": daemon_config.email_poll_interval_secs,
+                    "calendar_poll_interval_secs": daemon_config.calendar_poll_interval_secs,
+                    "max_concurrent_fetches": daemon_config.max_concurrent_fetches
+                },
+                "launchd_agent_installed": launchd_installed
+            })),
         }
     }
 }

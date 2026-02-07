@@ -7,13 +7,21 @@ use tracing::debug;
 
 /// Global rate limiter for all Google API requests
 pub struct GlobalRateLimiter {
-    limiter: Arc<RateLimiter<governor::state::NotKeyed, governor::state::InMemoryState, governor::clock::DefaultClock>>,
+    limiter: Arc<
+        RateLimiter<
+            governor::state::NotKeyed,
+            governor::state::InMemoryState,
+            governor::clock::DefaultClock,
+        >,
+    >,
 }
 
 impl GlobalRateLimiter {
     /// Create a new rate limiter with the specified requests per second
     pub fn new(requests_per_second: u32) -> Self {
-        let quota = Quota::per_second(NonZeroU32::new(requests_per_second).unwrap_or(NonZeroU32::new(10).unwrap()));
+        let quota = Quota::per_second(
+            NonZeroU32::new(requests_per_second).unwrap_or(NonZeroU32::new(10).unwrap()),
+        );
         let limiter = RateLimiter::direct(quota);
 
         Self {

@@ -337,16 +337,15 @@ impl Default for SearchConfig {
 impl SearchConfig {
     /// Returns a safe embedding batch size for chunked processing.
     ///
-    /// `0` is treated as invalid and coerced to `1`.
+    /// Values are clamped to `1..=1024`.
     pub fn effective_embedding_batch_size(&self) -> usize {
-        self.embedding_batch_size.max(1)
+        self.embedding_batch_size.clamp(1, 1024)
     }
 
     /// Returns the IMAP fetch batch size used during backfill.
-    ///
-    /// Keep this bounded to avoid very large UID fetch payloads.
+    /// This intentionally mirrors the embedding batch size.
     pub fn effective_imap_fetch_batch_size(&self) -> usize {
-        self.effective_embedding_batch_size().min(1024)
+        self.effective_embedding_batch_size()
     }
 
     /// Resolve the effective provider, preserving backward compatibility.
@@ -481,7 +480,7 @@ fn default_search_weight() -> f32 {
 }
 
 fn default_embedding_batch_size() -> usize {
-    1 // Minimal memory footprint, safe for 1GB containers
+    128 // Stable default for Gmail IMAP backfill + OpenRouter embedding throughput
 }
 
 fn default_embedding_gpu_threshold() -> usize {
@@ -770,7 +769,7 @@ mod tests {
         assert_eq!(config.search.effective_imap_fetch_batch_size(), 512);
 
         config.search.embedding_batch_size = 4096;
-        assert_eq!(config.search.effective_embedding_batch_size(), 4096);
+        assert_eq!(config.search.effective_embedding_batch_size(), 1024);
         assert_eq!(config.search.effective_imap_fetch_batch_size(), 1024);
     }
 }

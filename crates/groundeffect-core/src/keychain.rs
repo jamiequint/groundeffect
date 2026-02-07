@@ -114,10 +114,7 @@ impl KeychainManager {
                 Error::Token(format!("Failed to set permissions: {}", e))
             })?;
 
-            debug!(
-                "Stored OAuth tokens for {} (disk updated)",
-                account_id
-            );
+            debug!("Stored OAuth tokens for {} (disk updated)", account_id);
         } else {
             debug!(
                 "Stored OAuth tokens for {} (cache only, refresh_token unchanged)",
@@ -147,9 +144,8 @@ impl KeychainManager {
 
         match fs::read_to_string(&path) {
             Ok(data) => {
-                let tokens: OAuthTokens = serde_json::from_str(&data).map_err(|e| {
-                    Error::Token(format!("Invalid token data: {}", e))
-                })?;
+                let tokens: OAuthTokens = serde_json::from_str(&data)
+                    .map_err(|e| Error::Token(format!("Invalid token data: {}", e)))?;
 
                 // Cache the tokens for future calls
                 TOKEN_CACHE

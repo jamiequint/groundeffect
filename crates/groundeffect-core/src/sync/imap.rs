@@ -33,14 +33,18 @@ impl Authenticator for XOAuth2Auth {
 
     fn process(&mut self, challenge: &[u8]) -> Self::Response {
         let response = std::mem::take(&mut self.auth_string);
-        info!("XOAUTH2 process called, challenge len: {}, response len: {}",
-               challenge.len(), response.len());
+        info!(
+            "XOAUTH2 process called, challenge len: {}, response len: {}",
+            challenge.len(),
+            response.len()
+        );
         response
     }
 }
 
 /// Type alias for the IMAP session with our TLS stream
-type ImapSession = async_imap::Session<async_native_tls::TlsStream<tokio_util::compat::Compat<TcpStream>>>;
+type ImapSession =
+    async_imap::Session<async_native_tls::TlsStream<tokio_util::compat::Compat<TcpStream>>>;
 
 /// Gmail IMAP settings
 const IMAP_HOST: &str = "imap.gmail.com";
@@ -91,7 +95,8 @@ impl ImapClient {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| Error::Imap("Connection failed after retries".to_string())))
+        Err(last_error
+            .unwrap_or_else(|| Error::Imap("Connection failed after retries".to_string())))
     }
 
     /// Connect to Gmail IMAP
@@ -100,7 +105,10 @@ impl ImapClient {
 
         info!("Connecting to Gmail IMAP for {}...", self.account_id);
 
-        info!("  Step 1: Opening TCP connection to {}:{}...", IMAP_HOST, IMAP_PORT);
+        info!(
+            "  Step 1: Opening TCP connection to {}:{}...",
+            IMAP_HOST, IMAP_PORT
+        );
         let tcp = TcpStream::connect((IMAP_HOST, IMAP_PORT))
             .await
             .map_err(|e| Error::ConnectionFailed {
@@ -114,12 +122,13 @@ impl ImapClient {
 
         info!("  Step 2: Establishing TLS connection...");
         let tls = TlsConnector::new();
-        let tls_stream = tls.connect(IMAP_HOST, tcp_compat).await.map_err(|e| {
-            Error::ConnectionFailed {
-                host: IMAP_HOST.to_string(),
-                reason: e.to_string(),
-            }
-        })?;
+        let tls_stream =
+            tls.connect(IMAP_HOST, tcp_compat)
+                .await
+                .map_err(|e| Error::ConnectionFailed {
+                    host: IMAP_HOST.to_string(),
+                    reason: e.to_string(),
+                })?;
         info!("  Step 2: TLS connection established");
 
         let mut client = ImapClientAsync::new(tls_stream);
@@ -135,7 +144,9 @@ impl ImapClient {
                 return Err(Error::Imap(format!("Failed to read greeting: {:?}", e)));
             }
             None => {
-                return Err(Error::Imap("Unexpected end of stream, expected greeting".to_string()));
+                return Err(Error::Imap(
+                    "Unexpected end of stream, expected greeting".to_string(),
+                ));
             }
         }
 
@@ -227,10 +238,9 @@ impl ImapClient {
         if let Err(e) = session.select("INBOX").await {
             warn!("First select INBOX failed, reconnecting: {:?}", e);
             session = self.connect_with_retry().await?;
-            session
-                .select("INBOX")
-                .await
-                .map_err(|e| Error::Imap(format!("Failed to select INBOX after reconnect: {:?}", e)))?;
+            session.select("INBOX").await.map_err(|e| {
+                Error::Imap(format!("Failed to select INBOX after reconnect: {:?}", e))
+            })?;
         }
 
         // Search for emails in date range
@@ -256,9 +266,18 @@ impl ImapClient {
 
         let total_count = uids.len();
         if let Some(before_date) = before {
-            info!("Found {} emails from {} to {} for {}", total_count, since_str, before_date.format("%d-%b-%Y"), self.account_id);
+            info!(
+                "Found {} emails from {} to {} for {}",
+                total_count,
+                since_str,
+                before_date.format("%d-%b-%Y"),
+                self.account_id
+            );
         } else {
-            info!("Found {} emails since {} for {}", total_count, since_str, self.account_id);
+            info!(
+                "Found {} emails since {} for {}",
+                total_count, since_str, self.account_id
+            );
         }
 
         if uids.is_empty() {
@@ -286,12 +305,18 @@ impl ImapClient {
             let fetches: Vec<_> = {
                 use futures::StreamExt;
                 match session
-                    .uid_fetch(&uid_range, "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)")
+                    .uid_fetch(
+                        &uid_range,
+                        "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)",
+                    )
                     .await
                 {
                     Ok(messages) => messages.collect().await,
                     Err(e) => {
-                        warn!("Fetch failed for batch {}, will reconnect: {:?}", batch_index, e);
+                        warn!(
+                            "Fetch failed for batch {}, will reconnect: {:?}",
+                            batch_index, e
+                        );
                         vec![] // Empty vec signals we need to reconnect
                     }
                 }
@@ -311,21 +336,31 @@ impl ImapClient {
                 // Re-select INBOX
                 if let Err(select_err) = session.select("INBOX").await {
                     error!("Failed to re-select INBOX: {:?}", select_err);
-                    return Err(Error::Imap(format!("Failed to re-select INBOX: {:?}", select_err)));
+                    return Err(Error::Imap(format!(
+                        "Failed to re-select INBOX: {:?}",
+                        select_err
+                    )));
                 }
 
                 // Retry this batch
                 self.rate_limiter.wait().await;
                 use futures::StreamExt;
                 match session
-                    .uid_fetch(&uid_range, "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)")
+                    .uid_fetch(
+                        &uid_range,
+                        "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)",
+                    )
                     .await
                 {
                     Ok(messages) => messages.collect().await,
                     Err(retry_err) => {
                         error!("Fetch still failed after reconnect: {:?}", retry_err);
                         // Skip this batch and continue with the next one
-                        warn!("Skipping batch {} ({} emails) due to persistent error", batch_index, uid_batch.len());
+                        warn!(
+                            "Skipping batch {} ({} emails) due to persistent error",
+                            batch_index,
+                            uid_batch.len()
+                        );
                         batch_index += 1;
                         continue;
                     }
@@ -357,7 +392,10 @@ impl ImapClient {
             }
 
             if parse_errors > 0 {
-                warn!("Skipped {} emails due to parse errors in batch {}", parse_errors, batch_index);
+                warn!(
+                    "Skipped {} emails due to parse errors in batch {}",
+                    parse_errors, batch_index
+                );
             }
 
             // Sort by date descending
@@ -366,13 +404,19 @@ impl ImapClient {
             let batch_count = emails.len();
             total_fetched += batch_count;
 
-            info!("Fetched batch of {} emails ({}/{}) for {}", batch_count, total_fetched, total_count, self.account_id);
+            info!(
+                "Fetched batch of {} emails ({}/{}) for {}",
+                batch_count, total_fetched, total_count, self.account_id
+            );
 
             // Call the callback with this batch
             if !emails.is_empty() {
                 if let Err(e) = on_batch(emails).await {
                     // Log error but continue - emails will be refetched on next sync resume
-                    error!("Batch {} callback failed, will be retried on next sync: {}", batch_index, e);
+                    error!(
+                        "Batch {} callback failed, will be retried on next sync: {}",
+                        batch_index, e
+                    );
                 }
             }
 
@@ -414,7 +458,13 @@ impl ImapClient {
 
         // Apply offset and limit
         let uids: Vec<u32> = uids.into_iter().skip(offset).take(limit).collect();
-        debug!("Found {} emails since {} (offset={}, limit={})", uids.len(), since_str, offset, limit);
+        debug!(
+            "Found {} emails since {} (offset={}, limit={})",
+            uids.len(),
+            since_str,
+            offset,
+            limit
+        );
 
         if uids.is_empty() {
             session.logout().await.ok();
@@ -430,7 +480,10 @@ impl ImapClient {
 
         self.rate_limiter.wait().await;
         let messages = session
-            .uid_fetch(&uid_range, "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)")
+            .uid_fetch(
+                &uid_range,
+                "(UID FLAGS ENVELOPE BODY.PEEK[] X-GM-MSGID X-GM-THRID X-GM-LABELS)",
+            )
             .await
             .map_err(|e| Error::Imap(format!("Fetch failed: {:?}", e)))?;
 
@@ -459,7 +512,11 @@ impl ImapClient {
         // Sort by date descending to ensure newest first
         emails.sort_by(|a, b| b.date.cmp(&a.date));
 
-        info!("Fetched {} emails for {} (newest first)", emails.len(), self.account_id);
+        info!(
+            "Fetched {} emails for {} (newest first)",
+            emails.len(),
+            self.account_id
+        );
         Ok(emails)
     }
 
@@ -537,13 +594,15 @@ impl ImapClient {
             .map(|d| DateTime::from_timestamp(d.to_timestamp(), 0).unwrap_or_else(Utc::now))
             .unwrap_or_else(Utc::now);
 
-        let body_plain = parsed
+        let parsed_body_plain = parsed
             .body_text(0)
             .map(|s| s.to_string())
             .unwrap_or_default();
 
         let body_html = parsed.body_html(0).map(|s| s.to_string());
 
+        let body_plain =
+            Email::body_for_indexing_and_display(&parsed_body_plain, body_html.as_deref());
         let snippet = body_plain.chars().take(200).collect();
 
         // Parse attachments
@@ -562,14 +621,11 @@ impl ImapClient {
             .collect();
 
         // Parse flags
-        let flags: Vec<String> = fetch
-            .flags()
-            .map(|f| format!("{:?}", f))
-            .collect();
+        let flags: Vec<String> = fetch.flags().map(|f| format!("{:?}", f)).collect();
 
         // Gmail extensions
         let gmail_message_id = fetch.uid.unwrap_or(0) as u64; // TODO: Parse X-GM-MSGID
-        let gmail_thread_id = fetch.uid.unwrap_or(0) as u64;  // TODO: Parse X-GM-THRID
+        let gmail_thread_id = fetch.uid.unwrap_or(0) as u64; // TODO: Parse X-GM-THRID
 
         let in_reply_to = parsed.in_reply_to().as_text().map(|s| s.to_string());
         let references: Vec<String> = parsed
@@ -836,7 +892,8 @@ impl ImapClient {
 
             // Wait for IDLE response (timeout after 29 minutes - Gmail's limit is 30 min)
             // wait_with_timeout returns (Future, StopSource) - we await the future
-            let (wait_future, _stop_source) = idle_handle.wait_with_timeout(std::time::Duration::from_secs(29 * 60));
+            let (wait_future, _stop_source) =
+                idle_handle.wait_with_timeout(std::time::Duration::from_secs(29 * 60));
             match wait_future.await {
                 Ok(_) => {
                     // Got a notification, fetch new emails

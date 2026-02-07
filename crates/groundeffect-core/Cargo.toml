@@ -62,6 +62,7 @@ url = { workspace = true }
 open = { workspace = true }
 urlencoding = { workspace = true }
 html2text = { workspace = true }
+html-to-markdown-rs = { workspace = true }
 regex = { workspace = true }
 
 # Optional dependencies for postgres feature

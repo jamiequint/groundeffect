@@ -33,16 +33,16 @@ pub fn email_schema() -> Schema {
         Field::new("references", DataType::Utf8, true), // JSON array
         // Metadata
         Field::new("folder", DataType::Utf8, false),
-        Field::new("labels", DataType::Utf8, true),  // JSON array
-        Field::new("flags", DataType::Utf8, true),   // JSON array
+        Field::new("labels", DataType::Utf8, true), // JSON array
+        Field::new("flags", DataType::Utf8, true),  // JSON array
         // Headers
         Field::new("from_email", DataType::Utf8, false),
         Field::new("from_name", DataType::Utf8, true),
-        Field::new("to", DataType::Utf8, true),      // JSON array
-        Field::new("cc", DataType::Utf8, true),      // JSON array
-        Field::new("bcc", DataType::Utf8, true),     // JSON array
+        Field::new("to", DataType::Utf8, true),  // JSON array
+        Field::new("cc", DataType::Utf8, true),  // JSON array
+        Field::new("bcc", DataType::Utf8, true), // JSON array
         Field::new("subject", DataType::Utf8, false),
-        Field::new("date", DataType::Int64, false),  // Unix timestamp
+        Field::new("date", DataType::Int64, false), // Unix timestamp
         // Content
         Field::new("body_plain", DataType::Utf8, false),
         Field::new("body_html", DataType::Utf8, true),
@@ -79,8 +79,8 @@ pub fn event_schema() -> Schema {
         Field::new("description", DataType::Utf8, true),
         Field::new("location", DataType::Utf8, true),
         // Timing
-        Field::new("start", DataType::Utf8, false),  // ISO 8601 or date
-        Field::new("end", DataType::Utf8, false),    // ISO 8601 or date
+        Field::new("start", DataType::Utf8, false), // ISO 8601 or date
+        Field::new("end", DataType::Utf8, false),   // ISO 8601 or date
         Field::new("timezone", DataType::Utf8, false),
         Field::new("all_day", DataType::UInt32, false), // 0 or 1
         // Recurrence
@@ -139,9 +139,8 @@ pub fn empty_email_batch(schema: &Schema) -> RecordBatch {
             DataType::Int64 => Arc::new(Int64Array::from(Vec::<i64>::new())) as ArrayRef,
             DataType::FixedSizeList(_, size) => {
                 let values = Float32Array::from(Vec::<f32>::new());
-                Arc::new(
-                    FixedSizeListArray::try_new_from_values(values, *size).unwrap(),
-                ) as ArrayRef
+                Arc::new(FixedSizeListArray::try_new_from_values(values, *size).unwrap())
+                    as ArrayRef
             }
             _ => panic!("Unsupported type: {:?}", field.data_type()),
         })
@@ -182,10 +181,8 @@ pub fn emails_to_batch(emails: &[Email]) -> Result<RecordBatch> {
 
     let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
     let account_ids: Vec<&str> = emails.iter().map(|e| e.account_id.as_str()).collect();
-    let account_aliases: Vec<Option<&str>> = emails
-        .iter()
-        .map(|e| e.account_alias.as_deref())
-        .collect();
+    let account_aliases: Vec<Option<&str>> =
+        emails.iter().map(|e| e.account_alias.as_deref()).collect();
     let message_ids: Vec<&str> = emails.iter().map(|e| e.message_id.as_str()).collect();
     let gmail_message_ids: Vec<u64> = emails.iter().map(|e| e.gmail_message_id).collect();
     let gmail_thread_ids: Vec<u64> = emails.iter().map(|e| e.gmail_thread_id).collect();
@@ -223,10 +220,7 @@ pub fn emails_to_batch(emails: &[Email]) -> Result<RecordBatch> {
         })
         .collect();
     let from_emails: Vec<&str> = emails.iter().map(|e| e.from.email.as_str()).collect();
-    let from_names: Vec<Option<&str>> = emails
-        .iter()
-        .map(|e| e.from.name.as_deref())
-        .collect();
+    let from_names: Vec<Option<&str>> = emails.iter().map(|e| e.from.name.as_deref()).collect();
     let tos: Vec<Option<String>> = emails
         .iter()
         .map(|e| Some(serde_json::to_string(&e.to).unwrap()))
@@ -454,7 +448,8 @@ pub fn events_to_batch(events: &[CalendarEvent]) -> Result<RecordBatch> {
 
     let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
     let account_ids: Vec<&str> = events.iter().map(|e| e.account_id.as_str()).collect();
-    let account_aliases: Vec<Option<&str>> = events.iter().map(|e| e.account_alias.as_deref()).collect();
+    let account_aliases: Vec<Option<&str>> =
+        events.iter().map(|e| e.account_alias.as_deref()).collect();
     let google_event_ids: Vec<&str> = events.iter().map(|e| e.google_event_id.as_str()).collect();
     let ical_uids: Vec<&str> = events.iter().map(|e| e.ical_uid.as_str()).collect();
     let etags: Vec<&str> = events.iter().map(|e| e.etag.as_str()).collect();
@@ -462,37 +457,81 @@ pub fn events_to_batch(events: &[CalendarEvent]) -> Result<RecordBatch> {
     let descriptions: Vec<Option<&str>> = events.iter().map(|e| e.description.as_deref()).collect();
     let locations: Vec<Option<&str>> = events.iter().map(|e| e.location.as_deref()).collect();
 
-    let starts: Vec<String> = events.iter().map(|e| match &e.start {
-        EventTime::DateTime(dt) => dt.to_rfc3339(),
-        EventTime::Date(d) => d.to_string(),
-    }).collect();
-    let ends: Vec<String> = events.iter().map(|e| match &e.end {
-        EventTime::DateTime(dt) => dt.to_rfc3339(),
-        EventTime::Date(d) => d.to_string(),
-    }).collect();
+    let starts: Vec<String> = events
+        .iter()
+        .map(|e| match &e.start {
+            EventTime::DateTime(dt) => dt.to_rfc3339(),
+            EventTime::Date(d) => d.to_string(),
+        })
+        .collect();
+    let ends: Vec<String> = events
+        .iter()
+        .map(|e| match &e.end {
+            EventTime::DateTime(dt) => dt.to_rfc3339(),
+            EventTime::Date(d) => d.to_string(),
+        })
+        .collect();
 
     let timezones: Vec<&str> = events.iter().map(|e| e.timezone.as_str()).collect();
-    let all_days: Vec<u32> = events.iter().map(|e| if e.all_day { 1u32 } else { 0u32 }).collect();
-    let recurrence_rules: Vec<Option<&str>> = events.iter().map(|e| e.recurrence_rule.as_deref()).collect();
-    let recurrence_ids: Vec<Option<&str>> = events.iter().map(|e| e.recurrence_id.as_deref()).collect();
+    let all_days: Vec<u32> = events
+        .iter()
+        .map(|e| if e.all_day { 1u32 } else { 0u32 })
+        .collect();
+    let recurrence_rules: Vec<Option<&str>> = events
+        .iter()
+        .map(|e| e.recurrence_rule.as_deref())
+        .collect();
+    let recurrence_ids: Vec<Option<&str>> =
+        events.iter().map(|e| e.recurrence_id.as_deref()).collect();
 
-    let organizers: Vec<Option<String>> = events.iter().map(|e| {
-        e.organizer.as_ref().map(|o| serde_json::to_string(o).unwrap())
-    }).collect();
-    let attendees: Vec<Option<String>> = events.iter().map(|e| {
-        if e.attendees.is_empty() { None } else { Some(serde_json::to_string(&e.attendees).unwrap()) }
-    }).collect();
+    let organizers: Vec<Option<String>> = events
+        .iter()
+        .map(|e| {
+            e.organizer
+                .as_ref()
+                .map(|o| serde_json::to_string(o).unwrap())
+        })
+        .collect();
+    let attendees: Vec<Option<String>> = events
+        .iter()
+        .map(|e| {
+            if e.attendees.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&e.attendees).unwrap())
+            }
+        })
+        .collect();
 
-    let statuses: Vec<String> = events.iter().map(|e| {
-        serde_json::to_string(&e.status).unwrap().trim_matches('"').to_string()
-    }).collect();
-    let transparencies: Vec<String> = events.iter().map(|e| {
-        serde_json::to_string(&e.transparency).unwrap().trim_matches('"').to_string()
-    }).collect();
+    let statuses: Vec<String> = events
+        .iter()
+        .map(|e| {
+            serde_json::to_string(&e.status)
+                .unwrap()
+                .trim_matches('"')
+                .to_string()
+        })
+        .collect();
+    let transparencies: Vec<String> = events
+        .iter()
+        .map(|e| {
+            serde_json::to_string(&e.transparency)
+                .unwrap()
+                .trim_matches('"')
+                .to_string()
+        })
+        .collect();
 
-    let reminders: Vec<Option<String>> = events.iter().map(|e| {
-        if e.reminders.is_empty() { None } else { Some(serde_json::to_string(&e.reminders).unwrap()) }
-    }).collect();
+    let reminders: Vec<Option<String>> = events
+        .iter()
+        .map(|e| {
+            if e.reminders.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&e.reminders).unwrap())
+            }
+        })
+        .collect();
 
     // Build embedding array
     let embedding_values: Vec<f32> = events
@@ -522,17 +561,34 @@ pub fn events_to_batch(events: &[CalendarEvent]) -> Result<RecordBatch> {
         Arc::new(StringArray::from(summaries)),
         Arc::new(StringArray::from(descriptions)),
         Arc::new(StringArray::from(locations)),
-        Arc::new(StringArray::from(starts.iter().map(|s| s.as_str()).collect::<Vec<_>>())),
-        Arc::new(StringArray::from(ends.iter().map(|s| s.as_str()).collect::<Vec<_>>())),
+        Arc::new(StringArray::from(
+            starts.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        )),
+        Arc::new(StringArray::from(
+            ends.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        )),
         Arc::new(StringArray::from(timezones)),
         Arc::new(UInt32Array::from(all_days)),
         Arc::new(StringArray::from(recurrence_rules)),
         Arc::new(StringArray::from(recurrence_ids)),
-        Arc::new(StringArray::from(organizers.iter().map(|s| s.as_deref()).collect::<Vec<_>>())),
-        Arc::new(StringArray::from(attendees.iter().map(|s| s.as_deref()).collect::<Vec<_>>())),
-        Arc::new(StringArray::from(statuses.iter().map(|s| s.as_str()).collect::<Vec<_>>())),
-        Arc::new(StringArray::from(transparencies.iter().map(|s| s.as_str()).collect::<Vec<_>>())),
-        Arc::new(StringArray::from(reminders.iter().map(|s| s.as_deref()).collect::<Vec<_>>())),
+        Arc::new(StringArray::from(
+            organizers.iter().map(|s| s.as_deref()).collect::<Vec<_>>(),
+        )),
+        Arc::new(StringArray::from(
+            attendees.iter().map(|s| s.as_deref()).collect::<Vec<_>>(),
+        )),
+        Arc::new(StringArray::from(
+            statuses.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        )),
+        Arc::new(StringArray::from(
+            transparencies
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+        )),
+        Arc::new(StringArray::from(
+            reminders.iter().map(|s| s.as_deref()).collect::<Vec<_>>(),
+        )),
         Arc::new(embedding_array),
         Arc::new(StringArray::from(calendar_ids)),
         Arc::new(Int64Array::from(synced_ats)),
@@ -614,8 +670,8 @@ pub fn batch_to_event(batch: &RecordBatch, row: usize) -> Result<CalendarEvent> 
     };
 
     // Parse organizer JSON
-    let organizer: Option<Attendee> = get_optional_string("organizer")
-        .and_then(|s| serde_json::from_str(&s).ok());
+    let organizer: Option<Attendee> =
+        get_optional_string("organizer").and_then(|s| serde_json::from_str(&s).ok());
 
     // Parse attendees JSON
     let attendees: Vec<Attendee> = get_optional_string("attendees")
@@ -643,8 +699,8 @@ pub fn batch_to_event(batch: &RecordBatch, row: usize) -> Result<CalendarEvent> 
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
 
-    let synced_at = chrono::DateTime::from_timestamp(get_i64("synced_at"), 0)
-        .unwrap_or_else(chrono::Utc::now);
+    let synced_at =
+        chrono::DateTime::from_timestamp(get_i64("synced_at"), 0).unwrap_or_else(chrono::Utc::now);
 
     Ok(CalendarEvent {
         id: get_string("id"),
@@ -777,12 +833,17 @@ pub fn batch_to_account_lenient(batch: &RecordBatch, row: usize) -> Result<Accou
     };
 
     let added_at = DateTime::from_timestamp(get_i64("added_at"), 0).unwrap_or_else(Utc::now);
-    let last_sync_email = get_opt_i64("last_sync_email").and_then(|ts| DateTime::from_timestamp(ts, 0));
-    let last_sync_calendar = get_opt_i64("last_sync_calendar").and_then(|ts| DateTime::from_timestamp(ts, 0));
-    let sync_email_since = get_opt_i64("sync_email_since").and_then(|ts| DateTime::from_timestamp(ts, 0));
-    let oldest_email_synced = get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let last_sync_email =
+        get_opt_i64("last_sync_email").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let last_sync_calendar =
+        get_opt_i64("last_sync_calendar").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let sync_email_since =
+        get_opt_i64("sync_email_since").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let oldest_email_synced =
+        get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
     // This column may not exist in old schema - defaults to None
-    let oldest_event_synced = get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let oldest_event_synced =
+        get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
     // This column may not exist in old schema - defaults to false
     let sync_attachments = get_bool("sync_attachments");
     // This column may not exist in old schema - defaults to None
@@ -865,12 +926,17 @@ pub fn batch_to_account(batch: &RecordBatch, row: usize) -> Result<Account> {
     };
 
     let added_at = DateTime::from_timestamp(get_i64("added_at"), 0).unwrap_or_else(Utc::now);
-    let last_sync_email = get_opt_i64("last_sync_email").and_then(|ts| DateTime::from_timestamp(ts, 0));
-    let last_sync_calendar = get_opt_i64("last_sync_calendar").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let last_sync_email =
+        get_opt_i64("last_sync_email").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let last_sync_calendar =
+        get_opt_i64("last_sync_calendar").and_then(|ts| DateTime::from_timestamp(ts, 0));
 
-    let sync_email_since = get_opt_i64("sync_email_since").and_then(|ts| DateTime::from_timestamp(ts, 0));
-    let oldest_email_synced = get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
-    let oldest_event_synced = get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let sync_email_since =
+        get_opt_i64("sync_email_since").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let oldest_email_synced =
+        get_opt_i64("oldest_email_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
+    let oldest_event_synced =
+        get_opt_i64("oldest_event_synced").and_then(|ts| DateTime::from_timestamp(ts, 0));
     let sync_attachments = get_bool("sync_attachments");
     let estimated_total_emails = get_opt_i64("estimated_total_emails").map(|v| v as u64);
 

@@ -2,12 +2,12 @@
 //!
 //! Handles IMAP sync (with IMAP IDLE) for Gmail and CalDAV sync for Google Calendar.
 
-mod imap;
 mod caldav;
+mod imap;
 mod rate_limiter;
 
-pub use imap::*;
 pub use caldav::*;
+pub use imap::*;
 pub use rate_limiter::*;
 
 use std::collections::HashMap;
@@ -29,21 +29,46 @@ use crate::oauth::OAuthManager;
 #[derive(Debug, Clone)]
 pub enum SyncEvent {
     /// New email received
-    NewEmail { account_id: String, email_id: String },
+    NewEmail {
+        account_id: String,
+        email_id: String,
+    },
     /// Email updated (flags changed)
-    EmailUpdated { account_id: String, email_id: String },
+    EmailUpdated {
+        account_id: String,
+        email_id: String,
+    },
     /// Email deleted
-    EmailDeleted { account_id: String, email_id: String },
+    EmailDeleted {
+        account_id: String,
+        email_id: String,
+    },
     /// New calendar event
-    NewEvent { account_id: String, event_id: String },
+    NewEvent {
+        account_id: String,
+        event_id: String,
+    },
     /// Calendar event updated
-    EventUpdated { account_id: String, event_id: String },
+    EventUpdated {
+        account_id: String,
+        event_id: String,
+    },
     /// Calendar event deleted
-    EventDeleted { account_id: String, event_id: String },
+    EventDeleted {
+        account_id: String,
+        event_id: String,
+    },
     /// Sync started
-    SyncStarted { account_id: String, sync_type: SyncType },
+    SyncStarted {
+        account_id: String,
+        sync_type: SyncType,
+    },
     /// Sync completed
-    SyncCompleted { account_id: String, sync_type: SyncType, count: usize },
+    SyncCompleted {
+        account_id: String,
+        sync_type: SyncType,
+        count: usize,
+    },
     /// Sync error
     SyncError { account_id: String, error: String },
     /// Account needs re-authentication
@@ -185,10 +210,14 @@ impl SyncManager {
         info!("Initializing sync for account {}", account.id);
 
         // Check if we have valid tokens
-        let tokens = self.oauth.token_provider()
+        let tokens = self
+            .oauth
+            .token_provider()
             .get_tokens(&account.id)
             .await?
-            .ok_or_else(|| Error::TokenExpired { account: account.id.clone() })?;
+            .ok_or_else(|| Error::TokenExpired {
+                account: account.id.clone(),
+            })?;
 
         if tokens.is_expired() {
             // Try to refresh
@@ -198,7 +227,8 @@ impl SyncManager {
                     warn!("Token refresh failed for {}: {}", account.id, e);
                     self.emit_event(SyncEvent::AuthRequired {
                         account_id: account.id.clone(),
-                    }).await;
+                    })
+                    .await;
                     return Err(e);
                 }
             }
@@ -216,7 +246,9 @@ impl SyncManager {
             initial_sync_progress: None,
         };
 
-        self.account_states.write().insert(account.id.clone(), state);
+        self.account_states
+            .write()
+            .insert(account.id.clone(), state);
         Ok(())
     }
 
@@ -233,9 +265,14 @@ impl SyncManager {
         }
 
         // Get account's sync_email_since preference, default to 90 days
-        let account = self.db.get_account(account_id).await?
+        let account = self
+            .db
+            .get_account(account_id)
+            .await?
             .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
-        let target_since = account.sync_email_since.unwrap_or_else(|| Utc::now() - Duration::days(90));
+        let target_since = account
+            .sync_email_since
+            .unwrap_or_else(|| Utc::now() - Duration::days(90));
 
         // Check for existing emails to enable resume
         let (oldest_synced, _newest_synced) = self.db.get_email_sync_boundaries(account_id).await?;
@@ -253,7 +290,8 @@ impl SyncManager {
         // fetch_before: Some(date) for backfill mode to limit search range, None for incremental
         let (resume_mode, fetch_since, fetch_before) = if backfill_complete {
             // Backfill complete - only need incremental sync for new emails
-            let incremental_since = account.last_sync_email
+            let incremental_since = account
+                .last_sync_email
                 .map(|t| t - Duration::hours(1)) // 1 hour buffer for safety
                 .unwrap_or(target_since);
             info!(
@@ -278,17 +316,26 @@ impl SyncManager {
             (true, since_with_buffer, Some(oldest))
         } else {
             // Fresh sync - fetch all emails back to target_since
-            info!("Fresh sync for {} back to {}", account_id, target_since.format("%Y-%m-%d"));
+            info!(
+                "Fresh sync for {} back to {}",
+                account_id,
+                target_since.format("%Y-%m-%d")
+            );
             (false, target_since, None)
         };
 
         // Skip email sync if very recent (within last 5 minutes) and backfill complete
-        let skip_email_sync = backfill_complete && account.last_sync_email
-            .map(|t| Utc::now() - t < Duration::minutes(5))
-            .unwrap_or(false);
+        let skip_email_sync = backfill_complete
+            && account
+                .last_sync_email
+                .map(|t| Utc::now() - t < Duration::minutes(5))
+                .unwrap_or(false);
 
         if skip_email_sync {
-            info!("Email sync recently completed for {}, proceeding to calendar", account_id);
+            info!(
+                "Email sync recently completed for {}, proceeding to calendar",
+                account_id
+            );
             // Clear stale estimated_total_emails if backfill is complete
             if account.estimated_total_emails.is_some() {
                 let mut updated_account = account.clone();
@@ -300,15 +347,18 @@ impl SyncManager {
         } else {
             // Load existing message_ids for deduplication
             let existing_message_ids = std::sync::Arc::new(
-                self.db.get_email_message_ids(account_id).await.unwrap_or_default()
+                self.db
+                    .get_email_message_ids(account_id)
+                    .await
+                    .unwrap_or_default(),
             );
-            info!("Loaded {} existing message_ids for deduplication", existing_message_ids.len());
+            info!(
+                "Loaded {} existing message_ids for deduplication",
+                existing_message_ids.len()
+            );
 
-            let imap_client = ImapClient::new(
-                account_id,
-                self.oauth.clone(),
-                self.rate_limiter.clone(),
-            ).await?;
+            let imap_client =
+                ImapClient::new(account_id, self.oauth.clone(), self.rate_limiter.clone()).await?;
 
             // Phase 0: Count emails to get progress estimate
             // For incremental sync (backfill_complete), we don't need total INBOX count
@@ -317,8 +367,16 @@ impl SyncManager {
                 existing_count
             } else {
                 // Backfill sync - count emails since target date for accurate progress
-                let count = imap_client.count_emails_since(target_since).await.unwrap_or(0);
-                info!("Account {} has approximately {} emails since {}", account_id, count, target_since.format("%Y-%m-%d"));
+                let count = imap_client
+                    .count_emails_since(target_since)
+                    .await
+                    .unwrap_or(0);
+                info!(
+                    "Account {} has approximately {} emails since {}",
+                    account_id,
+                    count,
+                    target_since.format("%Y-%m-%d")
+                );
 
                 // Persist estimated total to database for CLI status
                 let mut updated_account = account.clone();
@@ -356,15 +414,17 @@ impl SyncManager {
             self.emit_event(SyncEvent::SyncStarted {
                 account_id: account_id.to_string(),
                 sync_type: SyncType::Email,
-            }).await;
+            })
+            .await;
 
-            // Keep IMAP fetch size aligned with embedding chunking so larger configured
-            // batches (e.g. 512/1024) are actually used end-to-end.
+            // Keep IMAP fetch size aligned with embedding chunking so configured
+            // batch sizing is applied consistently end-to-end.
             let batch_size = self.config.search.effective_imap_fetch_batch_size();
             let sync_start = std::time::Instant::now();
 
             // State for progress tracking (shared with callback)
-            let total_synced = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(existing_count as usize));
+            let total_synced =
+                std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(existing_count as usize));
             let total_new = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let total_synced_clone = total_synced.clone();
             let total_new_clone = total_new.clone();
@@ -377,52 +437,56 @@ impl SyncManager {
 
             // Use single connection to fetch emails (incremental or backfill depending on fetch_since)
             // fetch_before limits the date range during backfill to avoid re-fetching all emails
-            let result = imap_client.fetch_all_emails_since(fetch_since, fetch_before, batch_size, |emails| {
-                let total_synced = total_synced_clone.clone();
-                let total_new = total_new_clone.clone();
-                let account_states = account_states_clone.clone();
-                let account_id = account_id_owned.clone();
-                let db = db_clone.clone();
-                let embedding = embedding_clone.clone();
-                let sync_start = sync_start.clone();
-                let existing_ids = existing_ids_clone.clone();
-                let progress_path = progress_file_path.clone();
+            let result = imap_client
+                .fetch_all_emails_since(fetch_since, fetch_before, batch_size, |emails| {
+                    let total_synced = total_synced_clone.clone();
+                    let total_new = total_new_clone.clone();
+                    let account_states = account_states_clone.clone();
+                    let account_id = account_id_owned.clone();
+                    let db = db_clone.clone();
+                    let embedding = embedding_clone.clone();
+                    let sync_start = sync_start.clone();
+                    let existing_ids = existing_ids_clone.clone();
+                    let progress_path = progress_file_path.clone();
 
-                async move {
-                    // Filter out emails we already have (by message_id)
-                    let new_emails: Vec<_> = emails
-                        .into_iter()
-                        .filter(|e| !existing_ids.contains(&e.message_id))
-                        .collect();
+                    async move {
+                        // Filter out emails we already have (by message_id)
+                        let new_emails: Vec<_> = emails
+                            .into_iter()
+                            .filter(|e| !existing_ids.contains(&e.message_id))
+                            .collect();
 
-                    if new_emails.is_empty() {
-                        debug!("Batch contained only already-synced emails, skipping");
-                        return Ok(());
-                    }
+                        if new_emails.is_empty() {
+                            debug!("Batch contained only already-synced emails, skipping");
+                            return Ok(());
+                        }
 
-                    let batch_count = new_emails.len();
-                    let mut successfully_stored = 0;
+                        let batch_count = new_emails.len();
+                        let mut successfully_stored = 0;
 
-                    // Generate embeddings in batches for performance
-                    let embed_batch_size = self.config.search.effective_embedding_batch_size();
-                    const MAX_EMBED_RETRIES: u32 = 3;
+                        // Generate embeddings in batches for performance
+                        let embed_batch_size = self.config.search.effective_embedding_batch_size();
+                        const MAX_EMBED_RETRIES: u32 = 3;
 
-                    for embed_chunk in new_emails.chunks(embed_batch_size) {
-                        let texts: Vec<String> = embed_chunk.iter().map(|e| e.searchable_text()).collect();
+                        for embed_chunk in new_emails.chunks(embed_batch_size) {
+                            let texts: Vec<String> =
+                                embed_chunk.iter().map(|e| e.searchable_text()).collect();
 
-                        // Try to get embeddings (may return None if fallback is BM25-only)
-                        let embeddings_opt = match embedding.embed_batch(&texts) {
-                            Ok(opt) => opt,
-                            Err(e) => {
-                                warn!("Embedding failed: {}, storing emails without embeddings", e);
-                                None
-                            }
-                        };
+                            // Try to get embeddings (may return None if fallback is BM25-only)
+                            let embeddings_opt = match embedding.embed_batch(&texts).await {
+                                Ok(opt) => opt,
+                                Err(e) => {
+                                    warn!(
+                                        "Embedding failed: {}, storing emails without embeddings",
+                                        e
+                                    );
+                                    None
+                                }
+                            };
 
-                        // Create emails with or without embeddings depending on result
-                        let emails_to_store: Vec<Email> = match embeddings_opt {
-                            Some(embeddings) => {
-                                embed_chunk
+                            // Create emails with or without embeddings depending on result
+                            let emails_to_store: Vec<Email> = match embeddings_opt {
+                                Some(embeddings) => embed_chunk
                                     .iter()
                                     .zip(embeddings.into_iter())
                                     .map(|(email, emb)| {
@@ -430,84 +494,108 @@ impl SyncManager {
                                         email.embedding = Some(emb);
                                         email
                                     })
-                                    .collect()
-                            }
-                            None => {
-                                // Store without embeddings (BM25-only fallback)
-                                debug!("Storing {} emails without embeddings (BM25-only mode)", embed_chunk.len());
-                                embed_chunk.to_vec()
-                            }
-                        };
-
-                        let emails_with_embeddings = emails_to_store;
-
-                        // Retry database upsert with exponential backoff
-                        let mut db_success = false;
-                        for attempt in 1..=MAX_EMBED_RETRIES {
-                            match db.upsert_emails(&emails_with_embeddings).await {
-                                Ok(_) => {
-                                    db_success = true;
-                                    successfully_stored += emails_with_embeddings.len();
-                                    break;
+                                    .collect(),
+                                None => {
+                                    // Store without embeddings (BM25-only fallback)
+                                    debug!(
+                                        "Storing {} emails without embeddings (BM25-only mode)",
+                                        embed_chunk.len()
+                                    );
+                                    embed_chunk.to_vec()
                                 }
-                                Err(e) => {
-                                    warn!("DB upsert attempt {}/{} failed: {}", attempt, MAX_EMBED_RETRIES, e);
-                                    if attempt < MAX_EMBED_RETRIES {
-                                        let delay = 1000 * (1 << (attempt - 1));
-                                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                            };
+
+                            let emails_with_embeddings = emails_to_store;
+
+                            // Retry database upsert with exponential backoff
+                            let mut db_success = false;
+                            for attempt in 1..=MAX_EMBED_RETRIES {
+                                match db.upsert_emails(&emails_with_embeddings).await {
+                                    Ok(_) => {
+                                        db_success = true;
+                                        successfully_stored += emails_with_embeddings.len();
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "DB upsert attempt {}/{} failed: {}",
+                                            attempt, MAX_EMBED_RETRIES, e
+                                        );
+                                        if attempt < MAX_EMBED_RETRIES {
+                                            let delay = 1000 * (1 << (attempt - 1));
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                delay,
+                                            ))
+                                            .await;
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        if !db_success {
-                            error!("Failed to store batch after {} retries, {} emails may be lost", MAX_EMBED_RETRIES, emails_with_embeddings.len());
-                        }
-                    }
-
-                    if successfully_stored == 0 && batch_count > 0 {
-                        return Err(Error::Sync(format!("Failed to store any emails from batch of {}", batch_count)));
-                    }
-
-                    let prev = total_synced.fetch_add(successfully_stored, std::sync::atomic::Ordering::SeqCst);
-                    let new_total = prev + successfully_stored;
-                    total_new.fetch_add(successfully_stored, std::sync::atomic::Ordering::SeqCst);
-
-                    if successfully_stored < batch_count {
-                        warn!("Stored {}/{} emails for {} (some failed)", successfully_stored, batch_count, account_id);
-                    } else {
-                        info!("Embedded and stored {} new emails (total: {}) for {}", successfully_stored, new_total, account_id);
-                    }
-
-                    // Update progress and write to file for MCP to read
-                    {
-                        let elapsed = sync_start.elapsed().as_secs_f64();
-                        let states_snapshot: Vec<AccountSyncState>;
-                        {
-                            let mut states = account_states.write();
-                            if let Some(state) = states.get_mut(&account_id) {
-                                state.email_count = new_total as u64;
-                                if let Some(ref mut progress) = state.initial_sync_progress {
-                                    progress.emails_synced = new_total as u64;
-                                    progress.emails_per_second = if elapsed > 0.0 {
-                                        new_total as f64 / elapsed
-                                    } else {
-                                        0.0
-                                    };
-                                }
+                            if !db_success {
+                                error!(
+                                    "Failed to store batch after {} retries, {} emails may be lost",
+                                    MAX_EMBED_RETRIES,
+                                    emails_with_embeddings.len()
+                                );
                             }
-                            states_snapshot = states.values().cloned().collect();
                         }
 
-                        // Write progress file for MCP to read live status
-                        if let Ok(json) = serde_json::to_string_pretty(&states_snapshot) {
-                            let _ = std::fs::write(&progress_path, json);
+                        if successfully_stored == 0 && batch_count > 0 {
+                            return Err(Error::Sync(format!(
+                                "Failed to store any emails from batch of {}",
+                                batch_count
+                            )));
                         }
+
+                        let prev = total_synced
+                            .fetch_add(successfully_stored, std::sync::atomic::Ordering::SeqCst);
+                        let new_total = prev + successfully_stored;
+                        total_new
+                            .fetch_add(successfully_stored, std::sync::atomic::Ordering::SeqCst);
+
+                        if successfully_stored < batch_count {
+                            warn!(
+                                "Stored {}/{} emails for {} (some failed)",
+                                successfully_stored, batch_count, account_id
+                            );
+                        } else {
+                            info!(
+                                "Embedded and stored {} new emails (total: {}) for {}",
+                                successfully_stored, new_total, account_id
+                            );
+                        }
+
+                        // Update progress and write to file for MCP to read
+                        {
+                            let elapsed = sync_start.elapsed().as_secs_f64();
+                            let states_snapshot: Vec<AccountSyncState>;
+                            {
+                                let mut states = account_states.write();
+                                if let Some(state) = states.get_mut(&account_id) {
+                                    state.email_count = new_total as u64;
+                                    if let Some(ref mut progress) = state.initial_sync_progress {
+                                        progress.emails_synced = new_total as u64;
+                                        progress.emails_per_second = if elapsed > 0.0 {
+                                            new_total as f64 / elapsed
+                                        } else {
+                                            0.0
+                                        };
+                                    }
+                                }
+                                states_snapshot = states.values().cloned().collect();
+                            }
+
+                            // Write progress file for MCP to read live status
+                            if let Ok(json) = serde_json::to_string_pretty(&states_snapshot) {
+                                let _ = std::fs::write(&progress_path, json);
+                            }
+                        }
+
+                        Ok(())
                     }
-
-                    Ok(())
-                }
-            }).await;
+                })
+                .await;
 
             // Handle any error from the fetch operation
             if let Err(e) = result {
@@ -530,7 +618,8 @@ impl SyncManager {
                 account_id: account_id.to_string(),
                 sync_type: SyncType::Email,
                 count: new_emails_count,
-            }).await;
+            })
+            .await;
 
             // Update state and persist to database
             let now = Utc::now();
@@ -551,13 +640,20 @@ impl SyncManager {
                 should_sync_attachments = account.sync_attachments;
                 account.last_sync_email = Some(now);
                 // Update oldest_email_synced to track sync progress for resume
-                let (new_oldest, _) = self.db.get_email_sync_boundaries(account_id).await.unwrap_or((None, None));
+                let (new_oldest, _) = self
+                    .db
+                    .get_email_sync_boundaries(account_id)
+                    .await
+                    .unwrap_or((None, None));
                 if new_oldest.is_some() {
                     account.oldest_email_synced = new_oldest;
                 }
                 // Clear estimated_total_emails if backfill is complete (no longer meaningful)
-                let target = account.sync_email_since.unwrap_or_else(|| Utc::now() - Duration::days(90));
-                let backfill_done = account.oldest_email_synced
+                let target = account
+                    .sync_email_since
+                    .unwrap_or_else(|| Utc::now() - Duration::days(90));
+                let backfill_done = account
+                    .oldest_email_synced
                     .map(|o| o.date_naive() <= target.date_naive())
                     .unwrap_or(false);
                 if backfill_done && account.estimated_total_emails.is_some() {
@@ -572,11 +668,17 @@ impl SyncManager {
 
             // Download attachments if enabled for this account
             if should_sync_attachments {
-                info!("Downloading attachments for {} (sync_attachments enabled)", account_id);
+                info!(
+                    "Downloading attachments for {} (sync_attachments enabled)",
+                    account_id
+                );
                 match self.download_attachments_for_account(account_id).await {
                     Ok((count, size)) => {
                         if count > 0 {
-                            info!("Downloaded {} attachments ({} bytes) for {}", count, size, account_id);
+                            info!(
+                                "Downloaded {} attachments ({} bytes) for {}",
+                                count, size, account_id
+                            );
                         }
                     }
                     Err(e) => {
@@ -615,26 +717,34 @@ impl SyncManager {
         self.emit_event(SyncEvent::SyncStarted {
             account_id: account_id.to_string(),
             sync_type: SyncType::Calendar,
-        }).await;
+        })
+        .await;
 
         // Get account's sync_since setting
-        let account = self.db.get_account(account_id).await?
+        let account = self
+            .db
+            .get_account(account_id)
+            .await?
             .ok_or_else(|| Error::AccountNotFound(account_id.to_string()))?;
         let since = account.sync_email_since; // Uses same date range as email
 
-        let caldav_client = CalDavClient::new(
-            account_id,
-            self.oauth.clone(),
-            self.rate_limiter.clone(),
-        ).await?;
+        let caldav_client =
+            CalDavClient::new(account_id, self.oauth.clone(), self.rate_limiter.clone()).await?;
 
         let events = caldav_client.fetch_events(since).await?;
 
         let fetched_count = events.len();
-        info!("Fetched {} calendar events for {}", fetched_count, account_id);
+        info!(
+            "Fetched {} calendar events for {}",
+            fetched_count, account_id
+        );
 
         // Get existing event etags to skip unchanged events
-        let existing_etags = self.db.get_event_etags(account_id).await.unwrap_or_default();
+        let existing_etags = self
+            .db
+            .get_event_etags(account_id)
+            .await
+            .unwrap_or_default();
 
         // Filter to only new or changed events (compare by google_event_id and etag)
         let changed_events: Vec<_> = events
@@ -642,16 +752,23 @@ impl SyncManager {
             .filter(|e| {
                 match existing_etags.get(&e.google_event_id) {
                     Some(existing_etag) => existing_etag != &e.etag, // Changed
-                    None => true, // New event
+                    None => true,                                    // New event
                 }
             })
             .collect();
         let changed_count = changed_events.len();
 
         if changed_events.is_empty() {
-            info!("Calendar sync complete for {} - no changes detected", account_id);
+            info!(
+                "Calendar sync complete for {} - no changes detected",
+                account_id
+            );
         } else {
-            info!("{} new/changed calendar events to process for {}", changed_events.len(), account_id);
+            info!(
+                "{} new/changed calendar events to process for {}",
+                changed_events.len(),
+                account_id
+            );
 
             // Generate embeddings in batches for performance
             let batch_size = self.config.search.effective_embedding_batch_size();
@@ -663,29 +780,33 @@ impl SyncManager {
                 let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
 
                 // Try to get embeddings (may return None if fallback is BM25-only)
-                let embeddings_opt = match self.embedding.embed_batch(&texts) {
+                let embeddings_opt = match self.embedding.embed_batch(&texts).await {
                     Ok(opt) => opt,
                     Err(e) => {
-                        warn!("Calendar embedding failed: {}, storing events without embeddings", e);
+                        warn!(
+                            "Calendar embedding failed: {}, storing events without embeddings",
+                            e
+                        );
                         None
                     }
                 };
 
                 // Create events with or without embeddings
                 let events_with_embeddings: Vec<CalendarEvent> = match embeddings_opt {
-                    Some(embeddings) => {
-                        chunk
-                            .iter()
-                            .zip(embeddings.into_iter())
-                            .map(|(event, emb)| {
-                                let mut event = event.clone();
-                                event.embedding = Some(emb);
-                                event
-                            })
-                            .collect()
-                    }
+                    Some(embeddings) => chunk
+                        .iter()
+                        .zip(embeddings.into_iter())
+                        .map(|(event, emb)| {
+                            let mut event = event.clone();
+                            event.embedding = Some(emb);
+                            event
+                        })
+                        .collect(),
                     None => {
-                        debug!("Storing {} events without embeddings (BM25-only mode)", chunk.len());
+                        debug!(
+                            "Storing {} events without embeddings (BM25-only mode)",
+                            chunk.len()
+                        );
                         chunk.to_vec()
                     }
                 };
@@ -696,17 +817,24 @@ impl SyncManager {
                 processed += chunk.len();
 
                 // Log progress every batch
-                info!("Embedded and stored {}/{} calendar events for {}", processed, total, account_id);
+                info!(
+                    "Embedded and stored {}/{} calendar events for {}",
+                    processed, total, account_id
+                );
             }
 
-            info!("Calendar sync complete for {} - {} events updated", account_id, total);
+            info!(
+                "Calendar sync complete for {} - {} events updated",
+                account_id, total
+            );
         }
 
         self.emit_event(SyncEvent::SyncCompleted {
             account_id: account_id.to_string(),
             sync_type: SyncType::Calendar,
             count: changed_count,
-        }).await;
+        })
+        .await;
 
         // Update state and persist to database
         let now = Utc::now();
@@ -720,7 +848,11 @@ impl SyncManager {
         if let Ok(Some(mut account)) = self.db.get_account(account_id).await {
             account.last_sync_calendar = Some(now);
             // Update oldest_event_synced to track sync progress
-            let (oldest_event, _) = self.db.get_event_sync_boundaries(account_id).await.unwrap_or((None, None));
+            let (oldest_event, _) = self
+                .db
+                .get_event_sync_boundaries(account_id)
+                .await
+                .unwrap_or((None, None));
             if oldest_event.is_some() {
                 account.oldest_event_synced = oldest_event;
             }
@@ -741,20 +873,24 @@ impl SyncManager {
         std::fs::create_dir_all(&attachments_dir)?;
 
         // Get emails with attachments that haven't been downloaded
-        let emails = self.db.get_emails_with_pending_attachments(account_id).await?;
+        let emails = self
+            .db
+            .get_emails_with_pending_attachments(account_id)
+            .await?;
 
         if emails.is_empty() {
             info!("No pending attachments to download for {}", account_id);
             return Ok((0, 0));
         }
 
-        info!("Found {} emails with pending attachments for {}", emails.len(), account_id);
+        info!(
+            "Found {} emails with pending attachments for {}",
+            emails.len(),
+            account_id
+        );
 
-        let imap_client = ImapClient::new(
-            account_id,
-            self.oauth.clone(),
-            self.rate_limiter.clone(),
-        ).await?;
+        let imap_client =
+            ImapClient::new(account_id, self.oauth.clone(), self.rate_limiter.clone()).await?;
 
         let mut total_downloaded = 0usize;
         let mut total_size = 0u64;
@@ -765,7 +901,10 @@ impl SyncManager {
             }
 
             // Download all attachments for this email
-            match imap_client.download_all_attachments(email.uid, &attachments_dir).await {
+            match imap_client
+                .download_all_attachments(email.uid, &attachments_dir)
+                .await
+            {
                 Ok(downloaded) => {
                     if downloaded.is_empty() {
                         continue;
@@ -790,7 +929,10 @@ impl SyncManager {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to download attachments for email {}: {}", email.id, e);
+                    warn!(
+                        "Failed to download attachments for email {}: {}",
+                        email.id, e
+                    );
                 }
             }
         }
@@ -812,11 +954,8 @@ impl SyncManager {
 
         info!("Starting IMAP IDLE for {}", account_id);
 
-        let imap_client = ImapClient::new(
-            account_id,
-            self.oauth.clone(),
-            self.rate_limiter.clone(),
-        ).await?;
+        let imap_client =
+            ImapClient::new(account_id, self.oauth.clone(), self.rate_limiter.clone()).await?;
 
         let event_tx = self.event_tx.clone();
         let account_id = account_id.to_string();
@@ -837,11 +976,9 @@ impl SyncManager {
                 SyncType::Email => {
                     // Incremental email sync
                     debug!("Starting incremental email sync for {}", account_id);
-                    let imap_client = ImapClient::new(
-                        account_id,
-                        self.oauth.clone(),
-                        self.rate_limiter.clone(),
-                    ).await?;
+                    let imap_client =
+                        ImapClient::new(account_id, self.oauth.clone(), self.rate_limiter.clone())
+                            .await?;
 
                     let state = self.get_state(account_id);
                     let since = state
@@ -851,15 +988,20 @@ impl SyncManager {
                     let emails = imap_client.fetch_recent_emails(since, 100).await?;
 
                     if !emails.is_empty() {
-                        info!("Incremental sync: found {} new emails for {}", emails.len(), account_id);
+                        info!(
+                            "Incremental sync: found {} new emails for {}",
+                            emails.len(),
+                            account_id
+                        );
 
                         // Batch embed and insert for performance
                         let embed_batch_size = self.config.search.effective_embedding_batch_size();
                         for chunk in emails.chunks(embed_batch_size) {
-                            let texts: Vec<String> = chunk.iter().map(|e| e.searchable_text()).collect();
+                            let texts: Vec<String> =
+                                chunk.iter().map(|e| e.searchable_text()).collect();
 
                             // Try to get embeddings (may return None if fallback is BM25-only)
-                            let embeddings_opt = match self.embedding.embed_batch(&texts) {
+                            let embeddings_opt = match self.embedding.embed_batch(&texts).await {
                                 Ok(opt) => opt,
                                 Err(e) => {
                                     warn!("Email embedding failed: {}, storing emails without embeddings", e);
@@ -867,25 +1009,30 @@ impl SyncManager {
                                 }
                             };
 
-                            let emails_to_store: Vec<Email> = if let Some(embeddings) = embeddings_opt {
-                                // Got embeddings - attach them to emails
-                                chunk
-                                    .iter()
-                                    .zip(embeddings.into_iter())
-                                    .map(|(email, embedding)| {
-                                        let mut email = email.clone();
-                                        email.embedding = Some(embedding);
-                                        email
-                                    })
-                                    .collect()
-                            } else {
-                                // No embeddings (BM25-only) - store without embeddings
-                                chunk.to_vec()
-                            };
+                            let emails_to_store: Vec<Email> =
+                                if let Some(embeddings) = embeddings_opt {
+                                    // Got embeddings - attach them to emails
+                                    chunk
+                                        .iter()
+                                        .zip(embeddings.into_iter())
+                                        .map(|(email, embedding)| {
+                                            let mut email = email.clone();
+                                            email.embedding = Some(embedding);
+                                            email
+                                        })
+                                        .collect()
+                                } else {
+                                    // No embeddings (BM25-only) - store without embeddings
+                                    chunk.to_vec()
+                                };
 
                             self.db.upsert_emails(&emails_to_store).await?;
                         }
-                        info!("Incremental sync: stored {} emails for {}", emails.len(), account_id);
+                        info!(
+                            "Incremental sync: stored {} emails for {}",
+                            emails.len(),
+                            account_id
+                        );
                     }
 
                     // Update state and persist to database
@@ -907,7 +1054,10 @@ impl SyncManager {
                     // Download attachments if enabled for this account
                     if should_sync_attachments {
                         if let Err(e) = self.download_attachments_for_account(account_id).await {
-                            warn!("Failed to download attachments during incremental sync: {}", e);
+                            warn!(
+                                "Failed to download attachments during incremental sync: {}",
+                                e
+                            );
                         }
                     }
                 }

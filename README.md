@@ -211,7 +211,7 @@ Use `calendar events` to answer questions like "what's on my calendar tomorrow" 
 | `--max-fetches` | Max concurrent fetches (1-50) | 10 |
 | `--timezone` | User timezone for date parsing (e.g., America/Los_Angeles) | UTC |
 | `--embedding-provider` | Embedding backend: `local`, `openrouter`, `remote` | local |
-| `--embedding-batch-size` | Embedding + IMAP fetch batch size (1-1024) | 1 |
+| `--embedding-batch-size` | Embedding + IMAP fetch batch size (1-1024) | 128 |
 | `--openrouter-model` | OpenRouter embedding model ID | `openai/text-embedding-3-small` |
 | `--openrouter-api-key-env` | Env var name with OpenRouter API key | `OPENROUTER_API_KEY` |
 
@@ -225,8 +225,8 @@ groundeffect config settings --embedding-provider local
 export OPENROUTER_API_KEY="your-key"
 groundeffect config settings --embedding-provider openrouter
 
-# Increase OpenRouter/local batch size (also drives IMAP fetch batch size)
-groundeffect config settings --embedding-batch-size 512
+# Set embedding + IMAP fetch batch size (128 recommended for Gmail/OpenRouter stability)
+groundeffect config settings --embedding-batch-size 128
 
 # Optional: set a different OpenRouter model
 groundeffect config settings --openrouter-model "openai/text-embedding-3-large"

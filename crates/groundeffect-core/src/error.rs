@@ -138,7 +138,9 @@ impl Error {
             Error::ResourceNotFound(_) => "RESOURCE_NOT_FOUND",
             Error::RateLimited { .. } => "RATE_LIMITED",
             Error::Database(_) | Error::Arrow(_) => "DATABASE_ERROR",
-            Error::Imap(_) | Error::CalDav(_) | Error::Sync(_) | Error::ConnectionFailed { .. } => "SYNC_ERROR",
+            Error::Imap(_) | Error::CalDav(_) | Error::Sync(_) | Error::ConnectionFailed { .. } => {
+                "SYNC_ERROR"
+            }
             _ => "INTERNAL_ERROR",
         }
     }

@@ -63,7 +63,10 @@ impl GoogleOAuthConfig {
         }
 
         // Return placeholders if nothing found
-        ("YOUR_CLIENT_ID".to_string(), "YOUR_CLIENT_SECRET".to_string())
+        (
+            "YOUR_CLIENT_ID".to_string(),
+            "YOUR_CLIENT_SECRET".to_string(),
+        )
     }
 
     /// Parse shell-style exports from secrets file
@@ -98,9 +101,9 @@ impl GoogleOAuthConfig {
 
 /// Required OAuth scopes for GroundEffect
 pub const OAUTH_SCOPES: &[&str] = &[
-    "https://mail.google.com/",                     // Full Gmail access (IMAP)
-    "https://www.googleapis.com/auth/gmail.send",   // Send emails
-    "https://www.googleapis.com/auth/calendar",     // Full Calendar access
+    "https://mail.google.com/",                   // Full Gmail access (IMAP)
+    "https://www.googleapis.com/auth/gmail.send", // Send emails
+    "https://www.googleapis.com/auth/calendar",   // Full Calendar access
     "https://www.googleapis.com/auth/userinfo.email", // Get email address
     "https://www.googleapis.com/auth/userinfo.profile", // Get display name
 ];
@@ -183,12 +186,7 @@ impl OAuthManager {
             ("redirect_uri", self.config.redirect_uri.as_str()),
         ];
 
-        let response = self
-            .client
-            .post(TOKEN_URL)
-            .form(&params)
-            .send()
-            .await?;
+        let response = self.client.post(TOKEN_URL).form(&params).send().await?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -226,7 +224,8 @@ impl OAuthManager {
 
     /// Refresh an access token
     pub async fn refresh_token(&self, account_id: &str) -> Result<OAuthTokens> {
-        let current_tokens = self.token_provider
+        let current_tokens = self
+            .token_provider
             .get_tokens(account_id)
             .await?
             .ok_or_else(|| Error::TokenExpired {
@@ -242,17 +241,15 @@ impl OAuthManager {
             ("grant_type", "refresh_token"),
         ];
 
-        let response = self
-            .client
-            .post(TOKEN_URL)
-            .form(&params)
-            .send()
-            .await?;
+        let response = self.client.post(TOKEN_URL).form(&params).send().await?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            error!("Token refresh failed for {}: {} - {}", account_id, status, body);
+            error!(
+                "Token refresh failed for {}: {} - {}",
+                account_id, status, body
+            );
             return Err(Error::TokenRefreshFailed {
                 account: account_id.to_string(),
                 reason: format!("{} - {}", status, body),
@@ -273,7 +270,9 @@ impl OAuthManager {
         };
 
         // Store updated tokens
-        self.token_provider.store_tokens(account_id, &new_tokens).await?;
+        self.token_provider
+            .store_tokens(account_id, &new_tokens)
+            .await?;
         info!("Refreshed access token for {}", account_id);
 
         Ok(new_tokens)
@@ -304,7 +303,8 @@ impl OAuthManager {
     /// Get a valid access token, refreshing if necessary
     pub async fn get_valid_token(&self, account_id: &str) -> Result<String> {
         debug!("Getting valid token for {}", account_id);
-        let tokens = self.token_provider
+        let tokens = self
+            .token_provider
             .get_tokens(account_id)
             .await?
             .ok_or_else(|| Error::TokenExpired {

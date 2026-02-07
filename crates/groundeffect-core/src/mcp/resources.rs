@@ -23,8 +23,8 @@ pub fn get_resource_definitions() -> Vec<ResourceDefinition> {
         ResourceDefinition {
             uri: "email://{message_id}/body".to_string(),
             name: "Email body".to_string(),
-            description: "Email body as plain text".to_string(),
-            mime_type: Some("text/plain".to_string()),
+            description: "Email body as markdown".to_string(),
+            mime_type: Some("text/markdown".to_string()),
         },
         ResourceDefinition {
             uri: "email://{message_id}/attachments/{filename}".to_string(),
@@ -80,6 +80,7 @@ impl ResourceHandler {
                     .await?
                     .ok_or_else(|| Error::EmailNotFound(message_id.to_string()))?;
 
+                let body = email.resolved_body();
                 Ok(serde_json::json!({
                     "contents": [{
                         "uri": format!("email://{}", message_id),
@@ -90,7 +91,7 @@ impl ResourceHandler {
                             email.to.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "),
                             email.subject,
                             email.date.to_rfc2822(),
-                            email.body_plain
+                            body
                         )
                     }]
                 }))
@@ -103,11 +104,12 @@ impl ResourceHandler {
                     .await?
                     .ok_or_else(|| Error::EmailNotFound(message_id.to_string()))?;
 
+                let body = email.resolved_body();
                 Ok(serde_json::json!({
                     "contents": [{
                         "uri": format!("email://{}/body", message_id),
-                        "mimeType": "text/plain",
-                        "text": email.body_plain
+                        "mimeType": "text/markdown",
+                        "text": body
                     }]
                 }))
             }
@@ -151,7 +153,10 @@ impl ResourceHandler {
                     filename
                 )))
             }
-            _ => Err(Error::ResourceNotFound(format!("Invalid email URI: {}", path))),
+            _ => Err(Error::ResourceNotFound(format!(
+                "Invalid email URI: {}",
+                path
+            ))),
         }
     }
 

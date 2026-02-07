@@ -198,7 +198,9 @@ impl PostgresTokenProvider {
     /// Decrypt tokens
     fn decrypt(&self, data: &[u8]) -> Result<OAuthTokens> {
         if data.len() < NONCE_SIZE {
-            return Err(Error::Token("Invalid encrypted data: too short".to_string()));
+            return Err(Error::Token(
+                "Invalid encrypted data: too short".to_string(),
+            ));
         }
 
         let (nonce_bytes, ciphertext) = data.split_at(NONCE_SIZE);
@@ -328,10 +330,7 @@ impl TokenProvider for PostgresTokenProvider {
     async fn list_accounts(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = if let Some(ref user_id) = self.user_id {
             // Multi-tenant mode: filter by user_id
-            let query = format!(
-                "SELECT email FROM {} WHERE user_id = $1",
-                self.table_name
-            );
+            let query = format!("SELECT email FROM {} WHERE user_id = $1", self.table_name);
             sqlx::query_as(&query)
                 .bind(user_id)
                 .fetch_all(&self.pool)
@@ -339,9 +338,7 @@ impl TokenProvider for PostgresTokenProvider {
         } else {
             // Single-tenant mode
             let query = format!("SELECT email FROM {}", self.table_name);
-            sqlx::query_as(&query)
-                .fetch_all(&self.pool)
-                .await
+            sqlx::query_as(&query).fetch_all(&self.pool).await
         }
         .map_err(|e| Error::Token(format!("Failed to list accounts: {}", e)))?;
 

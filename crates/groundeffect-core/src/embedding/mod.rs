@@ -88,7 +88,10 @@ impl EmbeddingEngine {
 
         // Download model from HuggingFace
         let api = Api::new().map_err(|e| Error::ModelLoading(e.to_string()))?;
-        let repo = api.repo(Repo::new(model_type.model_id().to_string(), RepoType::Model));
+        let repo = api.repo(Repo::new(
+            model_type.model_id().to_string(),
+            RepoType::Model,
+        ));
 
         info!("Loading model files from HuggingFace...");
 
@@ -112,10 +115,18 @@ impl EmbeddingEngine {
             .or_else(|_| repo.get("pytorch_model.bin"))
             .map_err(|e| Error::ModelLoading(format!("Failed to get weights: {}", e)))?;
 
-        let vb = if weights_path.extension().map(|e| e == "safetensors").unwrap_or(false) {
+        let vb = if weights_path
+            .extension()
+            .map(|e| e == "safetensors")
+            .unwrap_or(false)
+        {
             unsafe {
-                VarBuilder::from_mmaped_safetensors(&[weights_path], candle_core::DType::F32, &device)
-                    .map_err(|e| Error::ModelLoading(format!("Failed to load safetensors: {}", e)))?
+                VarBuilder::from_mmaped_safetensors(
+                    &[weights_path],
+                    candle_core::DType::F32,
+                    &device,
+                )
+                .map_err(|e| Error::ModelLoading(format!("Failed to load safetensors: {}", e)))?
             }
         } else {
             VarBuilder::from_pth(weights_path, candle_core::DType::F32, &device)
@@ -137,7 +148,11 @@ impl EmbeddingEngine {
     }
 
     /// Load from a local cache directory
-    pub fn from_cache(cache_dir: impl AsRef<Path>, model_type: EmbeddingModel, use_gpu: bool) -> Result<Self> {
+    pub fn from_cache(
+        cache_dir: impl AsRef<Path>,
+        model_type: EmbeddingModel,
+        use_gpu: bool,
+    ) -> Result<Self> {
         let cache_dir = cache_dir.as_ref();
         let model_dir = cache_dir.join(model_type.model_id().replace("/", "--"));
 
@@ -220,7 +235,11 @@ impl EmbeddingEngine {
                 .map_err(|e| Error::Embedding(format!("Tokenization failed: {}", e)))?;
 
             let mut ids: Vec<u32> = encoding.get_ids().to_vec();
-            let mut mask: Vec<u32> = encoding.get_attention_mask().iter().map(|&x| x as u32).collect();
+            let mut mask: Vec<u32> = encoding
+                .get_attention_mask()
+                .iter()
+                .map(|&x| x as u32)
+                .collect();
 
             // Truncate if necessary
             if ids.len() > self.max_length {
@@ -248,13 +267,21 @@ impl EmbeddingEngine {
         // GPU work in isolated scope - all tensors dropped before sync
         let embeddings_vec: Vec<f32> = {
             let input_ids = Tensor::from_vec(input_ids_flat, (batch_size, max_len), &self.device)
-                .map_err(|e| Error::Embedding(format!("Failed to create input tensor: {}", e)))?;
+                .map_err(|e| {
+                Error::Embedding(format!("Failed to create input tensor: {}", e))
+            })?;
 
-            let attention_mask = Tensor::from_vec(attention_mask_flat, (batch_size, max_len), &self.device)
-                .map_err(|e| Error::Embedding(format!("Failed to create attention tensor: {}", e)))?;
+            let attention_mask =
+                Tensor::from_vec(attention_mask_flat, (batch_size, max_len), &self.device)
+                    .map_err(|e| {
+                        Error::Embedding(format!("Failed to create attention tensor: {}", e))
+                    })?;
 
-            let token_type_ids = Tensor::zeros((batch_size, max_len), candle_core::DType::U32, &self.device)
-                .map_err(|e| Error::Embedding(format!("Failed to create token type tensor: {}", e)))?;
+            let token_type_ids =
+                Tensor::zeros((batch_size, max_len), candle_core::DType::U32, &self.device)
+                    .map_err(|e| {
+                        Error::Embedding(format!("Failed to create token type tensor: {}", e))
+                    })?;
 
             // Run model
             let model = self.model.read();
@@ -435,18 +462,13 @@ const OPENROUTER_MAX_INPUT_CHARS: usize = 12_000;
 
 #[derive(Debug)]
 enum RemoteEmbeddingKind {
-    DawnCompatible {
-        model: String,
-    },
-    OpenRouter {
-        api_key: String,
-        model: String,
-    },
+    DawnCompatible { model: String },
+    OpenRouter { api_key: String, model: String },
 }
 
 /// Client for remote embedding service (custom /embed or OpenRouter)
 pub struct RemoteEmbeddingClient {
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
     url: String,
     kind: RemoteEmbeddingKind,
 }
@@ -455,7 +477,7 @@ impl RemoteEmbeddingClient {
     /// Create a new remote embedding client for custom /embed APIs.
     pub fn new(url: String, timeout_ms: u64) -> Result<Self> {
         let timeout = Duration::from_millis(timeout_ms);
-        let client = reqwest::blocking::Client::builder()
+        let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
             .map_err(|e| Error::Embedding(format!("Failed to create HTTP client: {}", e)))?;
@@ -471,9 +493,14 @@ impl RemoteEmbeddingClient {
     }
 
     /// Create a new remote embedding client for OpenRouter.
-    pub fn new_openrouter(url: String, api_key: String, model: String, timeout_ms: u64) -> Result<Self> {
+    pub fn new_openrouter(
+        url: String,
+        api_key: String,
+        model: String,
+        timeout_ms: u64,
+    ) -> Result<Self> {
         let timeout = Duration::from_millis(timeout_ms);
-        let client = reqwest::blocking::Client::builder()
+        let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
             .map_err(|e| Error::Embedding(format!("Failed to create HTTP client: {}", e)))?;
@@ -487,7 +514,7 @@ impl RemoteEmbeddingClient {
     }
 
     /// Generate embeddings for a batch of texts using the remote service
-    pub fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);
         }
@@ -510,20 +537,23 @@ impl RemoteEmbeddingClient {
                     .post(format!("{}/embed", self.url.trim_end_matches('/')))
                     .json(&request)
                     .send()
-                    .map_err(|e| Error::Embedding(format!("Remote embedding request failed: {}", e)))?;
+                    .await
+                    .map_err(|e| {
+                        Error::Embedding(format!("Remote embedding request failed: {}", e))
+                    })?;
 
                 if !response.status().is_success() {
                     let status = response.status();
-                    let body = response.text().unwrap_or_default();
+                    let body = response.text().await.unwrap_or_default();
                     return Err(Error::Embedding(format!(
                         "Remote embedding service returned {}: {}",
                         status, body
                     )));
                 }
 
-                let result: RemoteEmbedResponse = response
-                    .json()
-                    .map_err(|e| Error::Embedding(format!("Failed to parse embedding response: {}", e)))?;
+                let result: RemoteEmbedResponse = response.json().await.map_err(|e| {
+                    Error::Embedding(format!("Failed to parse embedding response: {}", e))
+                })?;
 
                 debug!(
                     "Received {} embeddings (dimension: {}, model: {}) from remote service",
@@ -533,22 +563,27 @@ impl RemoteEmbeddingClient {
                 Ok(Self::fit_embeddings(result.embeddings))
             }
             RemoteEmbeddingKind::OpenRouter { api_key, model } => {
-                self.embed_openrouter_batch(api_key, model, texts)
+                self.embed_openrouter_batch(api_key, model, texts).await
             }
         }
     }
 
     /// Generate embedding for a single text
-    pub fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let embeddings = self.embed_batch(&[text.to_string()])?;
+    pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        let embeddings = self.embed_batch(&[text.to_string()]).await?;
         Ok(embeddings.into_iter().next().unwrap_or_default())
     }
 
     /// Check if the remote service is available
-    pub fn is_available(&self) -> bool {
+    pub async fn is_available(&self) -> bool {
         match &self.kind {
             RemoteEmbeddingKind::DawnCompatible { .. } => {
-                match self.client.get(format!("{}/health", self.url.trim_end_matches('/'))).send() {
+                match self
+                    .client
+                    .get(format!("{}/health", self.url.trim_end_matches('/')))
+                    .send()
+                    .await
+                {
                     Ok(resp) => resp.status().is_success(),
                     Err(_) => false,
                 }
@@ -618,7 +653,9 @@ impl RemoteEmbeddingClient {
                 let char_count = text.chars().count();
                 if char_count > OPENROUTER_MAX_INPUT_CHARS {
                     truncated += 1;
-                    text.chars().take(OPENROUTER_MAX_INPUT_CHARS).collect::<String>()
+                    text.chars()
+                        .take(OPENROUTER_MAX_INPUT_CHARS)
+                        .collect::<String>()
                 } else {
                     text.clone()
                 }
@@ -628,7 +665,7 @@ impl RemoteEmbeddingClient {
         (sanitized, truncated)
     }
 
-    fn request_openrouter_embeddings(
+    async fn request_openrouter_embeddings(
         &self,
         api_key: &str,
         model: &str,
@@ -650,6 +687,7 @@ impl RemoteEmbeddingClient {
                 .bearer_auth(api_key)
                 .json(&request)
                 .send()
+                .await
             {
                 Ok(resp) => resp,
                 Err(e) => {
@@ -671,7 +709,7 @@ impl RemoteEmbeddingClient {
                 .unwrap_or("identity")
                 .to_string();
 
-            let body = match response.bytes() {
+            let body = match response.bytes().await {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     let msg = format!(
@@ -725,57 +763,67 @@ impl RemoteEmbeddingClient {
             return Ok(embeddings);
         }
 
-        Err(Error::Embedding(
-            last_error.unwrap_or_else(|| "OpenRouter embedding request failed".to_string()),
-        ))
+        Err(Error::Embedding(last_error.unwrap_or_else(|| {
+            "OpenRouter embedding request failed".to_string()
+        })))
     }
 
-    fn embed_openrouter_batch(
+    async fn embed_openrouter_batch(
         &self,
         api_key: &str,
         model: &str,
         texts: &[String],
     ) -> Result<Vec<Vec<f32>>> {
-        let (sanitized, truncated) = Self::sanitize_openrouter_inputs(texts);
-        if truncated > 0 {
-            warn!(
-                "Truncated {} OpenRouter embedding inputs to {} chars",
-                truncated, OPENROUTER_MAX_INPUT_CHARS
-            );
-        }
+        let mut output = Vec::with_capacity(texts.len());
+        let mut pending = vec![texts.to_vec()];
 
-        match self.request_openrouter_embeddings(api_key, model, &sanitized) {
-            Ok(embeddings) => {
-                debug!(
-                    "Received {} embeddings from OpenRouter model {}",
-                    embeddings.len(),
-                    model
-                );
-                Ok(Self::fit_embeddings(embeddings))
-            }
-            Err(err) => {
-                if texts.len() > 1 {
-                    let mid = texts.len() / 2;
-                    warn!(
-                        "OpenRouter batch of {} failed ({}). Splitting into {} + {}",
-                        texts.len(),
-                        err,
-                        mid,
-                        texts.len() - mid
-                    );
-                    let mut left = self.embed_openrouter_batch(api_key, model, &texts[..mid])?;
-                    let right = self.embed_openrouter_batch(api_key, model, &texts[mid..])?;
-                    left.extend(right);
-                    return Ok(left);
-                }
-
+        while let Some(chunk) = pending.pop() {
+            let (sanitized, truncated) = Self::sanitize_openrouter_inputs(&chunk);
+            if truncated > 0 {
                 warn!(
-                    "OpenRouter failed for a single input ({}). Using zero-vector fallback for this item",
-                    err
+                    "Truncated {} OpenRouter embedding inputs to {} chars",
+                    truncated, OPENROUTER_MAX_INPUT_CHARS
                 );
-                Ok(vec![vec![0.0; EMBEDDING_DIMENSION]])
+            }
+
+            match self
+                .request_openrouter_embeddings(api_key, model, &sanitized)
+                .await
+            {
+                Ok(embeddings) => {
+                    debug!(
+                        "Received {} embeddings from OpenRouter model {}",
+                        embeddings.len(),
+                        model
+                    );
+                    output.extend(Self::fit_embeddings(embeddings));
+                }
+                Err(err) => {
+                    if chunk.len() > 1 {
+                        let mid = chunk.len() / 2;
+                        warn!(
+                            "OpenRouter batch of {} failed ({}). Splitting into {} + {}",
+                            chunk.len(),
+                            err,
+                            mid,
+                            chunk.len() - mid
+                        );
+
+                        // LIFO stack: push right then left so left is processed first.
+                        pending.push(chunk[mid..].to_vec());
+                        pending.push(chunk[..mid].to_vec());
+                    } else {
+                        warn!(
+                            "OpenRouter failed for a single input ({}). Using zero-vector fallback for this item",
+                            err
+                        );
+                        output.push(vec![0.0; EMBEDDING_DIMENSION]);
+                    }
+                }
             }
         }
+
+        Ok(output)
     }
 }
 
@@ -831,7 +879,10 @@ impl HybridEmbeddingProvider {
     }
 
     /// Create from search config. Supports local, remote, and OpenRouter providers.
-    pub fn from_search_config(local: Option<Arc<EmbeddingEngine>>, search: &SearchConfig) -> Result<Self> {
+    pub fn from_search_config(
+        local: Option<Arc<EmbeddingEngine>>,
+        search: &SearchConfig,
+    ) -> Result<Self> {
         let remote = match search.effective_embedding_provider() {
             EmbeddingProvider::Local => None,
             EmbeddingProvider::Remote => {
@@ -866,7 +917,10 @@ impl HybridEmbeddingProvider {
                                 search.embedding_timeout_ms,
                             ) {
                                 Ok(client) => {
-                                    info!("OpenRouter embedding configured with model {}", search.openrouter_model);
+                                    info!(
+                                        "OpenRouter embedding configured with model {}",
+                                        search.openrouter_model
+                                    );
                                     Some(client)
                                 }
                                 Err(e) => {
@@ -888,12 +942,13 @@ impl HybridEmbeddingProvider {
         };
 
         // If no local engine and fallback is Local, change to Bm25
-        let actual_fallback = if local.is_none() && search.embedding_fallback == EmbeddingFallback::Local {
-            warn!("No local embedding engine provided, changing fallback from Local to Bm25");
-            EmbeddingFallback::Bm25
-        } else {
-            search.embedding_fallback
-        };
+        let actual_fallback =
+            if local.is_none() && search.embedding_fallback == EmbeddingFallback::Local {
+                warn!("No local embedding engine provided, changing fallback from Local to Bm25");
+                EmbeddingFallback::Bm25
+            } else {
+                search.embedding_fallback
+            };
 
         Ok(Self {
             remote,
@@ -906,14 +961,14 @@ impl HybridEmbeddingProvider {
     ///
     /// If remote service is configured and available, uses remote.
     /// Otherwise falls back based on configuration.
-    pub fn embed_batch(&self, texts: &[String]) -> Result<Option<Vec<Vec<f32>>>> {
+    pub async fn embed_batch(&self, texts: &[String]) -> Result<Option<Vec<Vec<f32>>>> {
         if texts.is_empty() {
             return Ok(Some(vec![]));
         }
 
         // Try remote first if configured
         if let Some(ref remote) = self.remote {
-            match remote.embed_batch(texts) {
+            match remote.embed_batch(texts).await {
                 Ok(embeddings) => {
                     debug!("Used remote embedding service for {} texts", texts.len());
                     return Ok(Some(embeddings));
@@ -937,26 +992,31 @@ impl HybridEmbeddingProvider {
                 }
             }
             EmbeddingFallback::Bm25 => {
-                debug!("Falling back to BM25-only (no embeddings) for {} texts", texts.len());
+                debug!(
+                    "Falling back to BM25-only (no embeddings) for {} texts",
+                    texts.len()
+                );
                 Ok(None) // Signal to skip vector search
             }
-            EmbeddingFallback::Error => {
-                Err(Error::Embedding(
-                    "Remote embedding service unavailable and fallback is 'error'".to_string(),
-                ))
-            }
+            EmbeddingFallback::Error => Err(Error::Embedding(
+                "Remote embedding service unavailable and fallback is 'error'".to_string(),
+            )),
         }
     }
 
     /// Generate embedding for a single text
-    pub fn embed(&self, text: &str) -> Result<Option<Vec<f32>>> {
-        let result = self.embed_batch(&[text.to_string()])?;
+    pub async fn embed(&self, text: &str) -> Result<Option<Vec<f32>>> {
+        let result = self.embed_batch(&[text.to_string()]).await?;
         Ok(result.map(|mut v| v.pop().unwrap_or_default()))
     }
 
     /// Check if remote service is available
-    pub fn is_remote_available(&self) -> bool {
-        self.remote.as_ref().map(|r| r.is_available()).unwrap_or(false)
+    pub async fn is_remote_available(&self) -> bool {
+        if let Some(remote) = &self.remote {
+            remote.is_available().await
+        } else {
+            false
+        }
     }
 
     /// Get the embedding dimension (768 for bge-base-en-v1.5)
@@ -974,7 +1034,9 @@ impl HybridEmbeddingProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::{RemoteEmbeddingClient, OPENROUTER_MAX_INPUT_CHARS};
+    use std::time::Duration;
+
+    use super::{RemoteEmbeddingClient, EMBEDDING_DIMENSION, OPENROUTER_MAX_INPUT_CHARS};
 
     #[test]
     fn parse_openrouter_embeddings_preserves_input_order_by_index() {
@@ -1029,5 +1091,53 @@ mod tests {
         assert_eq!(sanitized.len(), 2);
         assert_eq!(sanitized[0].chars().count(), OPENROUTER_MAX_INPUT_CHARS);
         assert_eq!(sanitized[1], short);
+    }
+
+    #[tokio::test]
+    #[ignore = "Live network smoke test; requires OPENROUTER_API_KEY"]
+    async fn openrouter_live_batch_1024_no_zero_vector_fallback() {
+        let api_key = std::env::var("OPENROUTER_API_KEY")
+            .expect("OPENROUTER_API_KEY must be set for live OpenRouter smoke test");
+        assert!(
+            !api_key.trim().is_empty(),
+            "OPENROUTER_API_KEY must not be empty"
+        );
+
+        let client = RemoteEmbeddingClient::new_openrouter(
+            "https://openrouter.ai/api/v1".to_string(),
+            api_key,
+            "openai/text-embedding-3-small".to_string(),
+            120_000,
+        )
+        .expect("failed to construct OpenRouter client");
+
+        let inputs: Vec<String> = (0..1024)
+            .map(|i| format!("groundeffect openrouter batch smoke {}", i))
+            .collect();
+
+        let start = std::time::Instant::now();
+        let embeddings = client
+            .embed_batch(&inputs)
+            .await
+            .expect("OpenRouter 1024 batch embedding request failed");
+        eprintln!(
+            "openrouter_live_batch_1024_no_zero_vector_fallback elapsed={:?}",
+            start.elapsed()
+        );
+
+        assert_eq!(embeddings.len(), 1024);
+        for emb in &embeddings {
+            assert_eq!(emb.len(), EMBEDDING_DIMENSION);
+            assert!(
+                emb.iter().any(|v| *v != 0.0),
+                "detected all-zero fallback vector in live OpenRouter smoke test"
+            );
+        }
+
+        // Keep this around as a hard guard against regressing to very slow fallback recursion.
+        assert!(
+            start.elapsed() < Duration::from_secs(180),
+            "1024 batch took unexpectedly long"
+        );
     }
 }

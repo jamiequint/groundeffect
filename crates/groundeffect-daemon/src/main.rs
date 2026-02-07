@@ -216,7 +216,9 @@ Content-Type: text/html; charset=utf-8
     let (tokens, user_info) = oauth.exchange_code(&code).await?;
 
     // Store tokens
-    token_provider.store_tokens(&user_info.email, &tokens).await?;
+    token_provider
+        .store_tokens(&user_info.email, &tokens)
+        .await?;
 
     println!(" Tokens stored securely\n");
 

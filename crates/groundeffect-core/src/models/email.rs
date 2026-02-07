@@ -2,11 +2,13 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use super::Attachment;
 
 const SEARCHABLE_BODY_MAX_CHARS: usize = 16_000;
 const SEARCHABLE_BODY_TAIL_CHARS: usize = 2_000;
+const HTML2TEXT_FALLBACK_WIDTH: usize = 100;
 
 /// Email address with optional display name
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,7 +126,8 @@ pub struct Email {
     pub date: DateTime<Utc>,
 
     // === Content ===
-    /// Plain text body
+    /// Body content used for search/display:
+    /// plain text when present, otherwise markdown converted from HTML.
     pub body_plain: String,
 
     /// HTML body (optional)
@@ -153,6 +156,58 @@ pub struct Email {
 }
 
 impl Email {
+    fn sanitize_body_text(text: &str) -> String {
+        text.chars()
+            .filter(|c| !matches!(c, '\u{0000}'..='\u{0008}' | '\u{000B}' | '\u{000C}' | '\u{000E}'..='\u{001F}' | '\u{007F}'))
+            .collect()
+    }
+
+    fn html_to_markdown_with_fallback(html: &str) -> String {
+        let sanitized_html = Self::sanitize_body_text(html);
+        if sanitized_html.trim().is_empty() {
+            return String::new();
+        }
+
+        match html_to_markdown_rs::convert(&sanitized_html, None) {
+            Ok(markdown) => {
+                let sanitized_markdown = Self::sanitize_body_text(&markdown);
+                if !sanitized_markdown.trim().is_empty() {
+                    return sanitized_markdown;
+                }
+            }
+            Err(err) => {
+                warn!(
+                    "HTML->Markdown conversion failed ({} chars), falling back to html2text: {}",
+                    sanitized_html.chars().count(),
+                    err
+                );
+            }
+        }
+
+        let fallback = html2text::from_read(sanitized_html.as_bytes(), HTML2TEXT_FALLBACK_WIDTH)
+            .unwrap_or_default();
+        Self::sanitize_body_text(&fallback)
+    }
+
+    /// Resolve the canonical body text used for embeddings, BM25, and user display.
+    /// Priority: plaintext body first, otherwise HTML converted to markdown.
+    pub fn body_for_indexing_and_display(body_plain: &str, body_html: Option<&str>) -> String {
+        let plain = Self::sanitize_body_text(body_plain);
+        if !plain.trim().is_empty() {
+            return plain;
+        }
+
+        match body_html {
+            Some(html) if !html.trim().is_empty() => Self::html_to_markdown_with_fallback(html),
+            _ => String::new(),
+        }
+    }
+
+    /// Resolve this email's canonical display/search body text.
+    pub fn resolved_body(&self) -> String {
+        Self::body_for_indexing_and_display(&self.body_plain, self.body_html.as_deref())
+    }
+
     fn embedding_body_excerpt(body: &str) -> String {
         let total_chars = body.chars().count();
         if total_chars <= SEARCHABLE_BODY_MAX_CHARS {
@@ -204,7 +259,8 @@ impl Email {
         text.push_str(". ");
 
         // Body
-        text.push_str(&Self::embedding_body_excerpt(&self.body_plain));
+        let body = self.resolved_body();
+        text.push_str(&Self::embedding_body_excerpt(&body));
 
         // Attachment filenames
         if !self.attachments.is_empty() {
@@ -293,13 +349,17 @@ impl From<&Email> for EmailSummary {
             date: email.date,
             snippet: email.snippet.clone(),
             has_attachments: !email.attachments.is_empty(),
-            attachments: email.attachments.iter().map(|a| AttachmentSummary {
-                id: a.id.clone(),
-                filename: a.filename.clone(),
-                mime_type: a.mime_type.clone(),
-                size_human: a.size_human(),
-                downloaded: a.downloaded,
-            }).collect(),
+            attachments: email
+                .attachments
+                .iter()
+                .map(|a| AttachmentSummary {
+                    id: a.id.clone(),
+                    filename: a.filename.clone(),
+                    mime_type: a.mime_type.clone(),
+                    size_human: a.size_human(),
+                    downloaded: a.downloaded,
+                })
+                .collect(),
             labels: email.labels.clone(),
         }
     }
@@ -321,6 +381,40 @@ mod tests {
         let excerpt = Email::embedding_body_excerpt(&long);
         assert!(excerpt.chars().count() <= SEARCHABLE_BODY_MAX_CHARS);
         assert!(excerpt.contains("[truncated]"));
+    }
+
+    #[test]
+    fn body_resolution_prefers_plain_text() {
+        let body = Email::body_for_indexing_and_display(
+            "Plain body",
+            Some("<p>HTML body should not win</p>"),
+        );
+        assert_eq!(body, "Plain body");
+    }
+
+    #[test]
+    fn body_resolution_uses_markdown_from_html_when_plain_missing() {
+        let html = "<h1>Hello</h1><p>See <a href=\"https://example.com\">example</a></p>";
+        let body = Email::body_for_indexing_and_display("", Some(html));
+        assert!(body.contains("Hello"));
+        assert!(body.contains("https://example.com"));
+        assert!(!body.contains("<h1>"));
+    }
+
+    #[test]
+    fn body_resolution_strips_control_chars() {
+        let body = Email::body_for_indexing_and_display("hello\u{0000}\u{0007}world", None);
+        assert_eq!(body, "helloworld");
+    }
+
+    #[test]
+    fn body_resolution_handles_html_with_control_chars() {
+        let html = "<p>hello\u{0000}\u{0007}<a href=\"https://example.com\">world</a></p>";
+        let body = Email::body_for_indexing_and_display("", Some(html));
+        assert!(body.contains("hello"));
+        assert!(body.contains("https://example.com"));
+        assert!(!body.contains('\u{0000}'));
+        assert!(!body.contains('\u{0007}'));
     }
 }
 

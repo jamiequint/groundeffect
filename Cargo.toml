@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.5"
+version = "0.5.6"
 edition = "2021"
 authors = ["Jamie Quint"]
 license = "MIT"
@@ -71,6 +71,7 @@ url = "2.5"
 open = "5.3"
 urlencoding = "2.1"
 html2text = "0.14"
+html-to-markdown-rs = "2.24.5"
 regex = "1.11"
 
 # Shared library

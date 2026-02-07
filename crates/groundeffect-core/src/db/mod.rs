@@ -9,8 +9,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow_array::{
-    ArrayRef, Float32Array, Int64Array, RecordBatch, RecordBatchIterator, StringArray,
-    UInt32Array, UInt64Array,
+    ArrayRef, Float32Array, Int64Array, RecordBatch, RecordBatchIterator, StringArray, UInt32Array,
+    UInt64Array,
 };
 use arrow_schema::{DataType, Field, Schema};
 use chrono::{DateTime, Utc};
@@ -64,9 +64,7 @@ impl Database {
             std::fs::create_dir_all(parent)?;
         }
 
-        let connection = connect(path.to_string_lossy().as_ref())
-            .execute()
-            .await?;
+        let connection = connect(path.to_string_lossy().as_ref()).execute().await?;
 
         let db = Self {
             connection,
@@ -181,8 +179,11 @@ impl Database {
 
             // Compare field count - if table has fewer fields, we need to migrate
             if table_schema.fields.len() < expected_schema.fields.len() {
-                info!("Accounts table schema is outdated ({} fields vs {} expected), migrating...",
-                      table_schema.fields.len(), expected_schema.fields.len());
+                info!(
+                    "Accounts table schema is outdated ({} fields vs {} expected), migrating...",
+                    table_schema.fields.len(),
+                    expected_schema.fields.len()
+                );
 
                 // Read all existing accounts
                 let results = table.query().execute().await?;
@@ -204,7 +205,8 @@ impl Database {
                 // Create new table with correct schema
                 let schema = account_schema();
                 let batch = empty_account_batch(&schema);
-                let batches_iter = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(schema.clone()));
+                let batches_iter =
+                    RecordBatchIterator::new(vec![Ok(batch)], Arc::new(schema.clone()));
                 let new_table = self
                     .connection
                     .create_table(ACCOUNTS_TABLE, Box::new(batches_iter))
@@ -215,7 +217,8 @@ impl Database {
                 if !accounts.is_empty() {
                     for account in &accounts {
                         let batch = account_to_batch(account)?;
-                        let batches_iter = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(account_schema()));
+                        let batches_iter =
+                            RecordBatchIterator::new(vec![Ok(batch)], Arc::new(account_schema()));
                         new_table.add(Box::new(batches_iter)).execute().await?;
                     }
                     info!("Migrated {} accounts to new schema", accounts.len());
@@ -403,16 +406,10 @@ impl Database {
         let batches = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(email_schema()));
 
         // Delete existing if present
-        table
-            .delete(&format!("id = '{}'", email.id))
-            .await
-            .ok(); // Ignore if not found
+        table.delete(&format!("id = '{}'", email.id)).await.ok(); // Ignore if not found
 
         // Insert new
-        table
-            .add(Box::new(batches))
-            .execute()
-            .await?;
+        table.add(Box::new(batches)).execute().await?;
 
         debug!("Upserted email {}", email.id);
         Ok(())
@@ -434,10 +431,7 @@ impl Database {
         // Insert new
         let batch = emails_to_batch(emails)?;
         let batches = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(email_schema()));
-        table
-            .add(Box::new(batches))
-            .execute()
-            .await?;
+        table.add(Box::new(batches)).execute().await?;
 
         debug!("Upserted {} emails", emails.len());
         Ok(())
@@ -464,10 +458,7 @@ impl Database {
         // Insert new
         let batch = events_to_batch(events)?;
         let batches = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(event_schema()));
-        table
-            .add(Box::new(batches))
-            .execute()
-            .await?;
+        table.add(Box::new(batches)).execute().await?;
 
         debug!("Upserted {} events", events.len());
         Ok(())
@@ -485,29 +476,34 @@ impl Database {
         let batches = RecordBatchIterator::new(vec![Ok(batch)], Arc::new(account_schema()));
 
         // Delete existing if present
-        table
-            .delete(&format!("id = '{}'", account.id))
-            .await
-            .ok();
+        table.delete(&format!("id = '{}'", account.id)).await.ok();
 
         // Try to insert new data
-        let result = table
-            .add(Box::new(batches))
-            .execute()
-            .await;
+        let result = table.add(Box::new(batches)).execute().await;
 
         // If insert fails, try to restore the old data
         if let Err(e) = result {
             tracing::error!("Failed to insert account {}: {}", account.id, e);
             if let Some(old_account) = existing {
-                tracing::warn!("Attempting to restore previous account data for {}", account.id);
+                tracing::warn!(
+                    "Attempting to restore previous account data for {}",
+                    account.id
+                );
                 // Try to restore the old account data
                 let restore_batch = account_to_batch(&old_account)?;
-                let restore_batches = RecordBatchIterator::new(vec![Ok(restore_batch)], Arc::new(account_schema()));
+                let restore_batches =
+                    RecordBatchIterator::new(vec![Ok(restore_batch)], Arc::new(account_schema()));
                 if let Err(restore_err) = table.add(Box::new(restore_batches)).execute().await {
-                    tracing::error!("Failed to restore account {}: {} - DATA LOSS OCCURRED", account.id, restore_err);
+                    tracing::error!(
+                        "Failed to restore account {}: {} - DATA LOSS OCCURRED",
+                        account.id,
+                        restore_err
+                    );
                 } else {
-                    tracing::info!("Successfully restored previous account data for {}", account.id);
+                    tracing::info!(
+                        "Successfully restored previous account data for {}",
+                        account.id
+                    );
                 }
             }
             return Err(Error::Database(e));
@@ -548,11 +544,7 @@ impl Database {
         let id_list: Vec<String> = ids.iter().map(|id| format!("'{}'", id)).collect();
         let filter = format!("id IN ({})", id_list.join(", "));
 
-        let results = table
-            .query()
-            .only_if(&filter)
-            .execute()
-            .await?;
+        let results = table.query().only_if(&filter).execute().await?;
 
         let batches: Vec<RecordBatch> = results.try_collect().await?;
 
@@ -579,11 +571,7 @@ impl Database {
             filter.push_str(&format!(" AND account_id = '{}'", acct));
         }
 
-        let results = table
-            .query()
-            .only_if(&filter)
-            .execute()
-            .await?;
+        let results = table.query().only_if(&filter).execute().await?;
 
         let batches: Vec<RecordBatch> = results.try_collect().await?;
 
@@ -601,21 +589,17 @@ impl Database {
     }
 
     /// Get emails that have attachments but haven't been downloaded yet
-    pub async fn get_emails_with_pending_attachments(&self, account_id: &str) -> Result<Vec<Email>> {
+    pub async fn get_emails_with_pending_attachments(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<Email>> {
         let table = self.emails_table()?;
 
         // Query emails with non-empty attachments
         // We filter for emails that have attachments JSON and check in Rust if downloaded
-        let filter = format!(
-            "account_id = '{}' AND attachments IS NOT NULL",
-            account_id
-        );
+        let filter = format!("account_id = '{}' AND attachments IS NOT NULL", account_id);
 
-        let results = table
-            .query()
-            .only_if(&filter)
-            .execute()
-            .await?;
+        let results = table.query().only_if(&filter).execute().await?;
 
         let batches: Vec<RecordBatch> = results.try_collect().await?;
 
@@ -639,16 +623,9 @@ impl Database {
     pub async fn get_attachment_stats(&self, account_id: &str) -> Result<(usize, usize, u64)> {
         let table = self.emails_table()?;
 
-        let filter = format!(
-            "account_id = '{}' AND attachments IS NOT NULL",
-            account_id
-        );
+        let filter = format!("account_id = '{}' AND attachments IS NOT NULL", account_id);
 
-        let results = table
-            .query()
-            .only_if(&filter)
-            .execute()
-            .await?;
+        let results = table.query().only_if(&filter).execute().await?;
 
         let batches: Vec<RecordBatch> = results.try_collect().await?;
 
@@ -722,11 +699,7 @@ impl Database {
         let id_list: Vec<String> = ids.iter().map(|id| format!("'{}'", id)).collect();
         let filter = format!("id IN ({})", id_list.join(", "));
 
-        let results = table
-            .query()
-            .only_if(&filter)
-            .execute()
-            .await?;
+        let results = table.query().only_if(&filter).execute().await?;
 
         let batches: Vec<RecordBatch> = results.try_collect().await?;
 
@@ -743,10 +716,7 @@ impl Database {
     /// List all accounts
     pub async fn list_accounts(&self) -> Result<Vec<Account>> {
         let table = self.accounts_table()?;
-        let results = table
-            .query()
-            .execute()
-            .await?;
+        let results = table.query().execute().await?;
 
         let batches: Vec<RecordBatch> = results.try_collect().await?;
         let mut accounts = Vec::new();
@@ -855,7 +825,8 @@ impl Database {
 
         let mut oldest: Option<DateTime<Utc>> = None;
         for batch in &batches {
-            if let Some(date_col) = batch.column_by_name("date")
+            if let Some(date_col) = batch
+                .column_by_name("date")
                 .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
             {
                 for i in 0..batch.num_rows() {
@@ -874,7 +845,10 @@ impl Database {
     }
 
     /// Get existing message_ids for an account (for deduplication during resume)
-    pub async fn get_email_message_ids(&self, account_id: &str) -> Result<std::collections::HashSet<String>> {
+    pub async fn get_email_message_ids(
+        &self,
+        account_id: &str,
+    ) -> Result<std::collections::HashSet<String>> {
         let table = self.emails_table()?;
 
         let query = table
@@ -887,7 +861,8 @@ impl Database {
 
         let mut message_ids = std::collections::HashSet::new();
         for batch in &batches {
-            if let Some(msg_id_col) = batch.column_by_name("message_id")
+            if let Some(msg_id_col) = batch
+                .column_by_name("message_id")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
             {
                 for i in 0..batch.num_rows() {
@@ -896,12 +871,19 @@ impl Database {
             }
         }
 
-        debug!("Loaded {} existing message_ids for {}", message_ids.len(), account_id);
+        debug!(
+            "Loaded {} existing message_ids for {}",
+            message_ids.len(),
+            account_id
+        );
         Ok(message_ids)
     }
 
     /// Get email sync boundaries for resume (oldest and newest dates)
-    pub async fn get_email_sync_boundaries(&self, account_id: &str) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
+    pub async fn get_email_sync_boundaries(
+        &self,
+        account_id: &str,
+    ) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
         let table = self.emails_table()?;
 
         let query = table
@@ -916,7 +898,8 @@ impl Database {
         let mut newest: Option<DateTime<Utc>> = None;
 
         for batch in &batches {
-            if let Some(date_col) = batch.column_by_name("date")
+            if let Some(date_col) = batch
+                .column_by_name("date")
                 .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
             {
                 for i in 0..batch.num_rows() {
@@ -944,7 +927,10 @@ impl Database {
     }
 
     /// Get event sync boundaries for resume (oldest and newest dates)
-    pub async fn get_event_sync_boundaries(&self, account_id: &str) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
+    pub async fn get_event_sync_boundaries(
+        &self,
+        account_id: &str,
+    ) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
         let table = self.events_table()?;
 
         let query = table
@@ -959,7 +945,8 @@ impl Database {
         let mut newest: Option<DateTime<Utc>> = None;
 
         for batch in &batches {
-            if let Some(start_col) = batch.column_by_name("start")
+            if let Some(start_col) = batch
+                .column_by_name("start")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
             {
                 for i in 0..batch.num_rows() {
@@ -967,7 +954,9 @@ impl Database {
                     // Parse as RFC3339 datetime or date-only
                     let dt = if let Ok(parsed) = DateTime::parse_from_rfc3339(start_str) {
                         parsed.with_timezone(&Utc)
-                    } else if let Ok(date) = chrono::NaiveDate::parse_from_str(start_str, "%Y-%m-%d") {
+                    } else if let Ok(date) =
+                        chrono::NaiveDate::parse_from_str(start_str, "%Y-%m-%d")
+                    {
                         date.and_hms_opt(0, 0, 0)
                             .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
                             .unwrap_or_else(Utc::now)
@@ -1008,10 +997,25 @@ impl Database {
 
         // Select all columns except the embedding vector for speed
         let columns = &[
-            "id", "account_id", "message_id", "gmail_thread_id", "folder",
-            "subject", "from_email", "from_name", "to", "cc", "bcc",
-            "date", "body_plain", "body_html", "snippet", "attachments",
-            "labels", "flags", "uid",
+            "id",
+            "account_id",
+            "message_id",
+            "gmail_thread_id",
+            "folder",
+            "subject",
+            "from_email",
+            "from_name",
+            "to",
+            "cc",
+            "bcc",
+            "date",
+            "body_plain",
+            "body_html",
+            "snippet",
+            "attachments",
+            "labels",
+            "flags",
+            "uid",
         ];
 
         let mut query = table
@@ -1053,10 +1057,25 @@ impl Database {
 
         // Select all columns except the embedding vector for speed
         let columns = &[
-            "id", "account_id", "calendar_id", "ical_uid", "summary", "description",
-            "location", "start_time", "end_time", "start_timestamp", "end_timestamp",
-            "is_all_day", "recurrence_rule", "organizer", "attendees", "status",
-            "created", "updated", "etag",
+            "id",
+            "account_id",
+            "calendar_id",
+            "ical_uid",
+            "summary",
+            "description",
+            "location",
+            "start_time",
+            "end_time",
+            "start_timestamp",
+            "end_timestamp",
+            "is_all_day",
+            "recurrence_rule",
+            "organizer",
+            "attendees",
+            "status",
+            "created",
+            "updated",
+            "etag",
         ];
 
         let mut query = table
@@ -1110,18 +1129,27 @@ impl Database {
 
         // Select all columns except the embedding vector for speed
         let columns = &[
-            "id", "account_id", "calendar_id", "ical_uid", "summary", "description",
-            "location", "start", "end", "timezone", "all_day",
-            "recurrence_rule", "organizer", "attendees", "status",
+            "id",
+            "account_id",
+            "calendar_id",
+            "ical_uid",
+            "summary",
+            "description",
+            "location",
+            "start",
+            "end",
+            "timezone",
+            "all_day",
+            "recurrence_rule",
+            "organizer",
+            "attendees",
+            "status",
             "etag",
         ];
 
         // Build filter for date range
         // start is stored as ISO 8601 string, so string comparison works
-        let mut filters = vec![
-            format!("start >= '{}'", from),
-            format!("start < '{}'", to),
-        ];
+        let mut filters = vec![format!("start >= '{}'", from), format!("start < '{}'", to)];
 
         // Add account filter if specified
         if let Some(accts) = accounts {
@@ -1163,13 +1191,19 @@ impl Database {
 
     /// Get a map of google_event_id -> etag for all events in an account
     /// Used to detect which events have changed during incremental sync
-    pub async fn get_event_etags(&self, account_id: &str) -> Result<std::collections::HashMap<String, String>> {
+    pub async fn get_event_etags(
+        &self,
+        account_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
         let table = self.events_table()?;
 
         // Only fetch the fields we need for comparison
         let query = table
             .query()
-            .select(lancedb::query::Select::columns(&["google_event_id", "etag"]))
+            .select(lancedb::query::Select::columns(&[
+                "google_event_id",
+                "etag",
+            ]))
             .only_if(&format!("account_id = '{}'", account_id));
 
         let results = query.execute().await?;
@@ -1186,7 +1220,10 @@ impl Database {
 
             if let (Some(ids), Some(etag_arr)) = (google_event_ids, etag_col) {
                 for i in 0..batch.num_rows() {
-                    if let (Some(id), Some(etag)) = (ids.value(i).to_string().into(), etag_arr.value(i).to_string().into()) {
+                    if let (Some(id), Some(etag)) = (
+                        ids.value(i).to_string().into(),
+                        etag_arr.value(i).to_string().into(),
+                    ) {
                         let id: String = ids.value(i).to_string();
                         let etag: String = etag_arr.value(i).to_string();
                         etags.insert(id, etag);
